@@ -241,7 +241,13 @@ ASSEMBLED --hold--> HOLD       （需 ADMIN，原因 1-500 字符）
 | 第五 | 现场写操作无请求级幂等键 | ✅ 已实现（6 个高风险端点） | `API_CONTRACT.md` §6 |
 | 第六 | 范围守卫失效、鉴权分散两层 | ✅ 已收敛（能力表）；D5 待处理 | `PERMISSION_MATRIX.md` |
 | 第六 | 记录归属权规则未实现（仓管可互相校对） | ⚠️ 待业务确认 | 本文档 §10 |
-| 第八 | 领星 endpoint 未限制 host，存在 SSRF 风险 | ⚠️ 待处理 | `API_CONTRACT.md` §7 |
+| 第八 | 领星 endpoint 未限制 host，存在 SSRF 风险 | ✅ 已修复（地址策略 + 重定向校验） | `SECURITY.md` §3 |
+| 第七 | 登录失败无限流 / lockout | ⚠️ 待处理 | `SECURITY.md` §1 |
+| 第十七 | `audit_events` 非 append-only，无 hash chain | ⚠️ 待处理（**高优先级**） | `SECURITY.md` §6 |
+| 第十九 | systemd 沙箱指令未启用 | ⚠️ 待处理 | `SECURITY.md` §4 |
+| 第三十七 | Excel/CSV 导出未防公式注入 | ⚠️ 待处理 | `SECURITY.md` §7 |
+| 第三十八 | 图片未限制像素尺寸（解压炸弹） | ⚠️ 待处理 | `SECURITY.md` §7 |
+| 第十二 | 前端 `innerHTML` 未全部审计 | ⚠️ 待处理 | `SECURITY.md` §7 |
 | 第十六 | 列表接口基本不分页；导出全内存构建 | ⚠️ 待处理 | `API_CONTRACT.md` §4/§5 |
 | 第十七 | `audit_events` 非 append-only，无 hash chain | ⚠️ 待处理 | 本文档 §9 |
 | 第十八/三十九 | `manage.py` 缺少 verify/restore/integrity 命令 | ✅ 已实现 | `BACKUP_RESTORE.md` |

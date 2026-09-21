@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from flask import Flask, Response, jsonify, render_template, request, send_file
+from flask import Flask, Response, current_app, jsonify, render_template, request, send_file
 from werkzeug.exceptions import HTTPException
 
 from traceability.codes import (
@@ -54,6 +54,11 @@ from traceability.auth import (
     require_warehouse,
 )
 from traceability.capabilities import Capability
+from traceability.endpoint_policy import (
+    EndpointPolicy,
+    EndpointPolicyError,
+    assert_url_allowed,
+)
 from traceability.idempotency import (
     CLAIMED,
     CONFLICT,
@@ -360,7 +365,13 @@ def load_lingxing_endpoint_overrides(database: sqlite3.Connection) -> dict[str, 
 
 
 def clean_lingxing_endpoint(value: object, label: str) -> str:
-    """Validate a Lingxing endpoint value: empty, a ``/path`` or an http(s) URL."""
+    """Validate a Lingxing endpoint value: empty, a ``/path`` or an allowlisted URL.
+
+    A relative path is the preferred form: it is joined onto the configured base
+    URL, so it cannot change which host the server contacts. An absolute URL has
+    to satisfy the endpoint policy — see ``traceability/endpoint_policy.py`` for
+    why an unrestricted URL here is a server-side request forgery primitive.
+    """
     text = str(value or "").strip()
     if not text:
         return ""
@@ -368,6 +379,12 @@ def clean_lingxing_endpoint(value: object, label: str) -> str:
         raise ApiError(f"{label}不能超过 300 个字符")
     if not re.fullmatch(r"(?:https?://[^\s]+|/[^\s]*)", text):
         raise ApiError(f"{label}需为以 / 开头的路径或 http(s) 链接")
+    if "://" in text:
+        policy = current_app.config.get("LINGXING_ENDPOINT_POLICY") or EndpointPolicy()
+        try:
+            assert_url_allowed(text, policy, label=label)
+        except EndpointPolicyError as error:
+            raise ApiError(str(error)) from error
     return text
 
 
@@ -1643,6 +1660,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         LINGXING_API_BASE_URL=os.environ.get(
             "PTS_LINGXING_API_BASE_URL", DEFAULT_API_BASE_URL
         ),
+        # Outbound endpoint policy: which hosts the Lingxing feature may contact.
+        # Defaults to openapi.lingxing.com only; see traceability/endpoint_policy.py.
+        LINGXING_ENDPOINT_POLICY=EndpointPolicy.from_environment(),
         LINGXING_ENDPOINTS={
             "token": os.environ.get("PTS_LINGXING_TOKEN_URL", DEFAULT_TOKEN_PATH),
             "refresh_token": os.environ.get(
@@ -6817,6 +6837,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             endpoints=merged_lingxing_endpoints(database),
             credential_config=app.config.get("LINGXING_CREDENTIALS"),
             api_base_url=app.config.get("LINGXING_API_BASE_URL", DEFAULT_API_BASE_URL),
+            policy=app.config.get("LINGXING_ENDPOINT_POLICY"),
             token_cache=LINGXING_TOKEN_CACHE,
         )
 

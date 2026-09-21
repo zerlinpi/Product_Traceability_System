@@ -15,6 +15,13 @@ from typing import Any, Callable, Mapping, Protocol
 
 from Crypto.Cipher import AES
 
+from traceability.endpoint_policy import (
+    EndpointPolicy,
+    EndpointPolicyError,
+    assert_url_allowed,
+    build_opener,
+)
+
 
 DEFAULT_API_BASE_URL = "https://openapi.lingxing.com"
 DEFAULT_TOKEN_PATH = "/api/auth-server/oauth/access-token"
@@ -227,7 +234,17 @@ class LingxingHttpClient(Protocol):
 
 
 class UrllibLingxingHttpClient:
-    """Minimal urllib-based transport for Lingxing OpenAPI calls."""
+    """Minimal urllib-based transport for Lingxing OpenAPI calls.
+
+    Every outbound request is validated against an :class:`EndpointPolicy`, and
+    redirects are re-validated. Validating only where the URL is configured is
+    not enough: a permitted host can answer ``302`` to an internal address and
+    ``urlopen`` would follow it.
+    """
+
+    def __init__(self, policy: EndpointPolicy | None = None) -> None:
+        self.policy = policy or EndpointPolicy()
+        self._opener = build_opener(self.policy)
 
     def request(
         self,
@@ -240,6 +257,12 @@ class UrllibLingxingHttpClient:
     ) -> Mapping[str, Any]:
         if not url:
             raise LingxingError("领星接口地址未配置", status=503)
+        try:
+            assert_url_allowed(url, self.policy, label="领星接口地址")
+        except EndpointPolicyError as error:
+            # A policy rejection is a configuration problem, not a transient
+            # network failure: never retry it.
+            raise LingxingError(str(error), status=503, retryable=False) from error
         body = (
             json.dumps(json_data, ensure_ascii=False).encode("utf-8")
             if json_data is not None
@@ -247,7 +270,7 @@ class UrllibLingxingHttpClient:
         )
         req = urllib.request.Request(url, data=body, method=method, headers=dict(headers))
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with self._opener.open(req, timeout=timeout) as response:
                 payload = response.read().decode("utf-8")
                 return json.loads(payload) if payload else {}
         except urllib.error.HTTPError as error:
@@ -265,6 +288,8 @@ class UrllibLingxingHttpClient:
                 f"领星接口返回 HTTP {error.code}{suffix}",
                 retryable=retryable,
             ) from error
+        except EndpointPolicyError as error:
+            raise LingxingError(str(error), status=503, retryable=False) from error
         except (urllib.error.URLError, TimeoutError) as error:
             raise LingxingError(f"领星网络请求失败：{error}", retryable=True) from error
 
@@ -361,14 +386,22 @@ class LingxingIntegrationService:
         credential_config: Mapping[str, Any] | None = None,
         token_cache: LingxingTokenCache | None = None,
         api_base_url: str = DEFAULT_API_BASE_URL,
+        policy: EndpointPolicy | None = None,
     ) -> None:
         self.database = database
-        self.http_client = http_client or UrllibLingxingHttpClient()
+        self.policy = policy or EndpointPolicy()
+        # The base URL decides which host a relative endpoint lands on, so it is
+        # checked here rather than only at request time.
+        base = str(api_base_url or DEFAULT_API_BASE_URL).strip().rstrip("/")
+        try:
+            self.api_base_url = assert_url_allowed(base, self.policy, label="领星基础地址")
+        except EndpointPolicyError as error:
+            raise LingxingError(str(error), status=503, retryable=False) from error
+        self.http_client = http_client or UrllibLingxingHttpClient(self.policy)
         self.clock = clock or _utc_now
         self.sleeper = sleeper or time.sleep
         self.retry_config = retry_config or RetryConfig()
         self.sign_strategy = sign_strategy
-        self.api_base_url = str(api_base_url or DEFAULT_API_BASE_URL).rstrip("/")
         self.endpoints = {
             "token": DEFAULT_TOKEN_PATH,
             "refresh_token": DEFAULT_REFRESH_TOKEN_PATH,
@@ -430,6 +463,11 @@ class LingxingIntegrationService:
         endpoint = str(endpoint or "").strip()
         if not endpoint:
             raise LingxingError("领星接口地址未配置", status=503)
+        # Deliberately a pure URL builder: the policy is enforced where bytes
+        # actually leave the process (``UrllibLingxingHttpClient``) and when an
+        # administrator saves the setting. Validating here as well would mean
+        # every test that injects a fake transport has to speak real URLs to
+        # exercise unrelated logic.
         if not urllib.parse.urlsplit(endpoint).scheme:
             endpoint = f"{self.api_base_url}/{endpoint.lstrip('/')}"
         if not query:

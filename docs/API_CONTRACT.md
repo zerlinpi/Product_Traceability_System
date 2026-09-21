@@ -203,10 +203,37 @@ GET /api/production-batches/<int:batch_id>/qr?page=N
 | 幂等 | 已 `PUSHED` 直接返回，不重复写远端 |
 | 写接口未配置时 | 在外部请求前**安全中止**，不会把本地单据误标为已同步 |
 
-> **⚠️ 安全问题（属第八目标）**：`clean_lingxing_endpoint()` 与
-> `LingxingIntegrationService._endpoint_url()` 当前**允许管理员输入任意 http(s) URL**，
-> 未限制 host、未拒绝私网地址、未禁止 HTTP。存在 SSRF 风险。
-> 生产环境**必须**通过 `PTS_LINGXING_*_URL` 显式配置且只填领星官方路径。
+### ✅ 出站地址策略（原 SSRF 风险已修复）
+
+此前 `clean_lingxing_endpoint()` 接受**任意** `http(s)://` URL：管理员（或取得管理员会话的人）
+可以把「推送领星」按钮指向 `http://169.254.169.254/latest/meta-data/`（云元数据）、
+`http://127.0.0.1:5080/api/users`（本系统自己的 API）或工厂局域网内任意主机，
+服务端会去请求并把响应回显出来。这是 SSRF 原语，不是配置失误。
+
+现由 `traceability/endpoint_policy.py` 统一约束：
+
+| 规则 | 说明 |
+| --- | --- |
+| 默认允许主机 | **仅** `openapi.lingxing.com` |
+| 自定义 endpoint | 默认只接受**相对路径**（拼接到基础地址，无法改变主机） |
+| 自定义主机 | 必须显式配置 `PTS_LINGXING_ALLOWED_HOSTS` 白名单 |
+| 协议 | 仅 `http`/`https`；`file://`、`ftp://`、`data:` 等一律拒绝 |
+| HTTP | 默认拒绝；`PTS_LINGXING_ALLOW_HTTP=1` 可开，但 `PTS_ENV=production` **强制关闭** |
+| 内网地址 | 回环、链路本地、私有、保留、组播地址一律拒绝（含 IPv6） |
+| 内部名称 | `localhost`、`*.localhost`、`*.local`、`*.internal`、`metadata` 等按名称拒绝 |
+| DNS 解析 | 允许列表中的**域名**若解析到内网地址，同样拒绝（防 DNS 重绑定） |
+| URL 用户名 | `https://openapi.lingxing.com@evil.com/` 这类构造被拒绝 |
+| **重定向** | 每次跳转都重新校验；允许的主机返回 `302` 到内网**不会被跟随** |
+
+策略在两处生效：
+
+1. **保存时**（`clean_lingxing_endpoint()`）—— 给管理员即时反馈
+2. **传输层**（`UrllibLingxingHttpClient`）—— 字节真正离开进程的地方，含重定向
+
+> 策略拒绝被标记为 `retryable=False`，不会被重试逻辑反复尝试。
+> 例外开关 `PTS_LINGXING_ALLOW_PRIVATE_HOSTS=1` 会**关闭全部内网检查**，仅限实验环境使用。
+
+完整的 82 项策略测试见 `tests/test_ssrf_policy.py`。
 
 ---
 

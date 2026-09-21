@@ -22,3 +22,10 @@ set "PTS_LINGXING_API_BASE_URL=https://openapi.lingxing.com"
 set "PTS_LINGXING_PURCHASE_ORDER_URL="
 set "PTS_LINGXING_INBOUND_URL="
 set "PTS_LINGXING_INVENTORY_URL="
+
+rem Outbound endpoint policy (SSRF defence). By default only
+rem openapi.lingxing.com is allowed, over HTTPS only. Prefer relative paths
+rem (e.g. /erp/sc/routing/...) for the *_URL settings above.
+set "PTS_LINGXING_ALLOWED_HOSTS="
+set "PTS_LINGXING_ALLOW_HTTP=0"
+set "PTS_LINGXING_ALLOW_PRIVATE_HOSTS=0"
