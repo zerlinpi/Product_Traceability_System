@@ -47,11 +47,13 @@ from traceability.auth import (
     initialize_auth,
     require_admin,
     require_admin_or_warehouse,
+    require_capability,
     require_operations,
     require_product_model_access,
     require_supplier_access,
     require_warehouse,
 )
+from traceability.capabilities import Capability
 from traceability.lingxing import (
     DEFAULT_API_BASE_URL,
     DEFAULT_INVENTORY_RECEIVE_PATH,
@@ -3680,6 +3682,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.get("/api/production-batches/<int:batch_id>")
     def get_production_batch(batch_id: int):
+        require_capability(Capability.TRACE_VIEW)
         # Batch detail carries the base fields plus registration status and the
         # batch-level reverse-trace list (design 6.2). A missing batch returns a
         # descriptive 404 (Requirement 1.8). A warehouse operator must be
@@ -3699,6 +3702,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.get("/api/production-batches/<int:batch_id>/qr")
     def production_batch_qr(batch_id: int):
+        require_capability(Capability.TRACE_VIEW)
         # Reuse ``make_qr_svg`` to render the batch QR. The QR encodes the
         # existing ``batch_code`` (``PTS:B:{batch_code}``) so re-printing reuses
         # the same code value rather than minting a new one (Requirements 3.1,
@@ -4039,6 +4043,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.post("/api/batch-trace/query")
     def batch_trace_query():
+        require_capability(Capability.TRACE_VIEW)
         # An authenticated user scans a batch QR to perform a READ-ONLY
         # traceability lookup (Requirement 10.1). Authentication is enforced by
         # ``before_request`` (unauthenticated -> 401, Requirement 10.8); any
@@ -5239,6 +5244,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.get("/api/part-label-batches/<int:batch_id>")
     def get_part_label_batch(batch_id: int):
+        require_capability(Capability.TRACE_VIEW)
         database = get_db()
         batch = database.execute(
             """
@@ -5287,6 +5293,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.get("/api/part-label-batches/<int:batch_id>/qrcodes.zip")
     def download_part_label_batch_qrcodes(batch_id: int):
+        require_capability(Capability.TRACE_VIEW)
         database = get_db()
         batch = database.execute(
             """
@@ -5585,6 +5592,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.get("/api/machines/<int:machine_id>/qr")
     def machine_qr(machine_id: int):
+        require_capability(Capability.TRACE_VIEW)
         row = get_db().execute(
             "SELECT identification_code, product_model_id FROM machines WHERE id = ?",
             (machine_id,),
@@ -5598,6 +5606,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.get("/api/part-labels/<int:label_id>/qr")
     def part_label_qr(label_id: int):
+        require_capability(Capability.TRACE_VIEW)
         row = get_db().execute(
             """
             SELECT pl.identification_code, pt.supplier_id
@@ -5751,6 +5760,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.post("/api/scan")
     def process_scan():
+        require_capability(Capability.LEGACY_SCAN)
         payload = request.get_json(silent=True) or {}
         station_id = normalize_station_id(payload.get("stationId"))
         station_name = clean_text(payload.get("stationName"), "工位名称", max_length=60) or station_id[-8:]
@@ -6109,6 +6119,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.get("/api/records")
     def list_records():
+        require_capability(Capability.RECORD_VIEW)
         search = clean_text(request.args.get("search"), "搜索内容", max_length=100)
         record_status = clean_text(
             request.args.get("status"), "质量状态", max_length=20
@@ -6301,6 +6312,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.put("/api/records/<int:record_id>")
     def update_record(record_id: int):
+        require_capability(Capability.RECORD_EDIT)
         payload = request.get_json(silent=True) or {}
         remarks = clean_text(payload.get("remarks"), "校对备注", max_length=200)
         part_codes_value = payload.get("partCodes")
@@ -6428,6 +6440,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.delete("/api/records/<int:record_id>")
     def delete_record(record_id: int):
+        require_capability(Capability.RECORD_DELETE)
         database = get_db()
         record = editable_record(database, record_id)
         reason = clean_text(
@@ -6467,6 +6480,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.get("/api/genealogy")
     def get_genealogy():
+        require_capability(Capability.TRACE_VIEW)
         code = clean_text(request.args.get("code"), "查询识别码", required=True, max_length=120).upper()
         database = get_db()
         machine = database.execute(

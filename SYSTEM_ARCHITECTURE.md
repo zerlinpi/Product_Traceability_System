@@ -41,6 +41,12 @@
 
 账号使用单值 `role`，最终角色集合恰好为 `{ADMIN, WAREHOUSE, OPERATIONS}`；一个账号不能同时持有仓管和运营角色。历史 `OPERATOR` 在 v14 迁移时映射为 `WAREHOUSE`。
 
+**角色到权限的映射集中在 `traceability/capabilities.py`**：`Capability` 枚举定义「能做什么」，
+`ROLE_CAPABILITIES` 定义「哪个角色能做什么」，路由通过 `require_capability(Capability.X)` 判权。
+`ADMIN` 持有全部能力。该模块不依赖 Flask，因此 `tools/extract_routes.py` 与测试都能直接导入，
+保证 `docs/PERMISSION_MATRIX.md` 不会与代码脱节。**注意：ADMIN 通过所有角色守卫**——
+系统中不存在「仅仓管、不含管理员」的权限级别。
+
 ### 管理员（ADMIN）
 
 - 维护产品、供应商、部件、供应批次、安全库存和产品用料；

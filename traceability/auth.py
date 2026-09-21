@@ -10,14 +10,19 @@ from typing import Any
 from flask import Flask, current_app, g, jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from traceability.capabilities import (
+    ROLE_ADMIN,
+    ROLE_OPERATIONS,
+    ROLE_WAREHOUSE,
+    VALID_ROLES,
+    Capability,
+    capabilities_for_role,
+    missing_capabilities,
+)
 from traceability.codes import new_event_id
 from traceability.db import get_db
 
 
-ROLE_ADMIN = "ADMIN"
-ROLE_WAREHOUSE = "WAREHOUSE"
-ROLE_OPERATIONS = "OPERATIONS"
-VALID_ROLES = {ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_OPERATIONS}
 USERNAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,49}")
 
 
@@ -105,28 +110,52 @@ def current_actor_name(fallback: str = "") -> str:
     return str(user["display_name"]) if user else fallback
 
 
+def require_capability(*capabilities: Capability) -> None:
+    """Authorise the current user for one or more capabilities.
+
+    This is the preferred guard for new code. The policy it consults lives in
+    ``traceability/capabilities.py``, so "which role may do this" is reviewable
+    in one place instead of being spread across the route handlers.
+
+    Passing several capabilities requires **all** of them.
+    """
+    user = current_user()
+    if not user:
+        raise AuthError("登录状态已失效，请重新登录", 401)
+    missing = missing_capabilities(str(user["role"]), capabilities)
+    if missing:
+        names = "、".join(item.value for item in missing)
+        raise AuthError(f"当前角色无权执行此操作（缺少权限：{names}）", 403)
+
+
 def require_admin() -> None:
     user = current_user()
     if not user or user["role"] != ROLE_ADMIN:
         raise AuthError("仅管理员可以执行此操作", 403)
 
 
-def require_admin_or_warehouse() -> None:
+def require_warehouse() -> None:
+    """ADMIN or WAREHOUSE.
+
+    Note the name: there is **no** "warehouse only, excluding admin" level in
+    this system. ADMIN is a superuser and passes every role guard.
+    """
     user = current_user()
     if not user or user["role"] not in {ROLE_ADMIN, ROLE_WAREHOUSE}:
         raise AuthError("仅管理员或仓管可以执行此操作", 403)
 
 
-def require_warehouse() -> None:
-    user = current_user()
-    if not user or user["role"] not in {ROLE_ADMIN, ROLE_WAREHOUSE}:
-        raise AuthError("仅仓管可以执行此操作", 403)
+# Historical alias. ``require_admin_or_warehouse`` and ``require_warehouse`` were
+# two separate implementations that happened to be identical; they are now one
+# function under two names so they can never drift apart. New code should prefer
+# ``require_capability(Capability.X)``.
+require_admin_or_warehouse = require_warehouse
 
 
 def require_operations() -> None:
     user = current_user()
     if not user or user["role"] not in {ROLE_ADMIN, ROLE_OPERATIONS}:
-        raise AuthError("仅运营可以执行此操作", 403)
+        raise AuthError("仅管理员或运营可以执行此操作", 403)
 
 
 def current_operator_id() -> int | None:

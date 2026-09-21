@@ -27,6 +27,16 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from traceability.capabilities import (  # noqa: E402
+    ROLE_ADMIN,
+    ROLE_OPERATIONS,
+    ROLE_WAREHOUSE,
+    Capability,
+    roles_for,
+)
 
 # Routes are registered in more than one module. ``app.py`` holds the bulk;
 # ``traceability/auth.py`` registers the authentication and user-management
@@ -40,18 +50,22 @@ SOURCES: tuple[Path, ...] = (
 ROUTE_RE = re.compile(r'^    @app\.(?P<method>get|post|put|delete|patch|route)\((?P<args>.*)\)\s*$')
 DEF_RE = re.compile(r"^    def (?P<name>\w+)\(")
 CALL_RE = re.compile(r"\b(?P<name>[a-z_][a-z0-9_]*)\s*\(")
+CAPABILITY_CALL_RE = re.compile(r"require_capability\(\s*Capability\.(?P<name>\w+)")
 
 # Guards live in traceability/auth.py; these are the leaves of the call graph.
-GUARD_ROLE = {
-    "require_admin": "admin",
-    "require_admin_or_warehouse": "admin|warehouse",
-    "require_warehouse": "admin|warehouse",
-    "require_operations": "admin|operations",
+# Each maps to the set of roles that pass it.
+GUARD_ROLE: dict[str, frozenset[str]] = {
+    "require_admin": frozenset({ROLE_ADMIN}),
+    "require_admin_or_warehouse": frozenset({ROLE_ADMIN, ROLE_WAREHOUSE}),
+    "require_warehouse": frozenset({ROLE_ADMIN, ROLE_WAREHOUSE}),
+    "require_operations": frozenset({ROLE_ADMIN, ROLE_OPERATIONS}),
 }
 GUARD_SCOPE = {
     "require_product_model_access": "scope:product",
     "require_supplier_access": "scope:supplier",
 }
+
+ALL_ROLES = frozenset({ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_OPERATIONS})
 
 # Scope guards are no-ops because auth.current_operator_id() returns None.
 SCOPE_GUARDS_ARE_NOOP = True
@@ -99,6 +113,10 @@ def _resolve_guards(
         for guard in {*GUARD_ROLE, *GUARD_SCOPE}:
             if re.search(rf"\b{guard}\s*\(", body) and guard not in guards:
                 guards.append(guard)
+        for match in CAPABILITY_CALL_RE.finditer(body):
+            token = f"cap:{match.group('name')}"
+            if token not in guards:
+                guards.append(token)
         queue.extend(_calls(body, known) - visited)
     return guards, visited
 
@@ -134,9 +152,23 @@ def _extract_file(source: Path) -> list[dict[str, object]]:
         for callee in visited - {handler}:
             callee_start, callee_end = blocks[callee]
             write_body += "\n" + "\n".join(lines[callee_start:callee_end])
-        roles = sorted({GUARD_ROLE[g] for g in guards if g in GUARD_ROLE})
+        roles = sorted({GUARD_ROLE[g] for g in guards if g in GUARD_ROLE})  # type: ignore[index]
+        resolved: set[str] = set()
+        for item in roles:  # type: ignore[union-attr]
+            resolved |= set(item)
+        capabilities = sorted({g[4:] for g in guards if g.startswith("cap:")})
+        for name in capabilities:
+            try:
+                resolved |= set(roles_for(Capability[name]))
+            except KeyError as error:  # pragma: no cover - guards against typos
+                raise SystemExit(f"unknown capability in app.py: {name}") from error
+        roles = sorted(resolved)
         scopes = sorted({GUARD_SCOPE[g] for g in guards if g in GUARD_SCOPE})
-        own_guards = [g for g in guards if re.search(rf"\b{g}\s*\(", body)]
+        own_guards = [
+            g
+            for g in guards
+            if re.search(rf"\b{g}\s*\(", body) or f"Capability.{g[4:]}" in body
+        ]
         routes.append(
             {
                 "method": route.group("method").upper(),
@@ -145,6 +177,7 @@ def _extract_file(source: Path) -> list[dict[str, object]]:
                 "source": str(source.relative_to(ROOT)).replace("\\", "/"),
                 "line": index + 1,
                 "roles": roles,
+                "capabilities": capabilities,
                 "scopes": scopes,
                 "guard_source": sorted(visited),
                 "guards_in_handler": sorted(own_guards),
@@ -159,25 +192,24 @@ def _extract_file(source: Path) -> list[dict[str, object]]:
     return routes
 
 
+def _roles_label(roles: object) -> str:
+    role_set = set(roles)  # type: ignore[arg-type]
+    if not role_set:
+        return "any authenticated"
+    if role_set == set(ALL_ROLES):
+        return "any authenticated"
+    return " + ".join(sorted(role_set))
+
+
 def effective(route: dict[str, object]) -> str:
     """Human-readable effective access, e.g. 'ADMIN + WAREHOUSE'."""
-    roles = route["roles"]  # type: ignore[assignment]
-    scopes = route["scopes"]  # type: ignore[assignment]
-    names: list[str] = []
     if route.get("public"):
-        names.append("public")
-    if "admin" in roles:
-        names.append("ADMIN")
-    for role in roles:
-        if role.startswith("admin|"):
-            names.append(role.split("|", 1)[1].upper())
-    if scopes:
-        names.append("+".join(scopes) + ("(NOOP)" if SCOPE_GUARDS_ARE_NOOP else ""))
-    if not names:
-        return "any authenticated"
-    if names == ["public"]:
         return "public (no login)"
-    return " + ".join(names)
+    scopes = route["scopes"]  # type: ignore[assignment]
+    parts = [_roles_label(route["roles"])]
+    if scopes:
+        parts.append("+".join(scopes) + ("(NOOP)" if SCOPE_GUARDS_ARE_NOOP else ""))
+    return " ".join(parts)
 
 
 BEGIN_MARKER = "<!-- BEGIN GENERATED ROUTE TABLE -->"
@@ -187,8 +219,8 @@ MATRIX_DOC = ROOT / "docs" / "PERMISSION_MATRIX.md"
 
 def _markdown_table(routes: list[dict[str, object]]) -> str:
     lines = [
-        "| Method | Path | Effective access | Guard location | Writes |",
-        "| --- | --- | --- | --- | --- |",
+        "| Method | Path | Effective access | Capability | Guard location | Writes |",
+        "| --- | --- | --- | --- | --- | --- |",
     ]
     for route in sorted(routes, key=lambda r: (str(r["path"]), str(r["method"]))):
         where = (
@@ -197,9 +229,11 @@ def _markdown_table(routes: list[dict[str, object]]) -> str:
             else "service: "
             + ", ".join(sorted(set(route["guard_source"]) - {route["handler"]}))[:70]
         )
+        caps = route["capabilities"]  # type: ignore[assignment]
+        cap_cell = ", ".join(f"`{item}`" for item in caps) if caps else ""
         lines.append(
             f"| `{route['method']}` | `{route['path']}` | {effective(route)} | "
-            f"{where} | {'yes' if route['writes'] else ''} |"
+            f"{cap_cell} | {where} | {'yes' if route['writes'] else ''} |"
         )
     return "\n".join(lines)
 

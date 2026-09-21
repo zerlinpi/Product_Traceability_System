@@ -32,14 +32,15 @@
 
 | 来源 | 描述 |
 | --- | --- |
-| `SYSTEM_ARCHITECTURE.md:46`（**已过时**） | 仓管「只看到管理员分配且启用的产品」 |
-| `auth.py:132-141` 注释 | 仓管处理**每一个**产品，范围检查按不受限处理，**与管理员一致** |
+| `SYSTEM_ARCHITECTURE.md`（**已过时，已修正**） | 仓管「只看到管理员分配且启用的产品」 |
+| `auth.py` `current_operator_id()` 注释 | 仓管处理**每一个**产品，范围检查按不受限处理，**与管理员一致** |
 | `README.md` | 仓管「可对**全部产品**执行入库、批次生成、登记与查询」 |
 
 **基线判定：仓管可操作全部产品。** 已修正 `SYSTEM_ARCHITECTURE.md`。
 
-副作用（详见 `PERMISSION_MATRIX.md` D2/D4）：`require_product_model_access()` 与
-`require_supplier_access()` 沦为**空操作**，范围授权表仍写入但**不再拦任何请求**。
+副作用：`require_product_model_access()` 与 `require_supplier_access()` 是**空操作**，
+范围授权表仍写入但**不再拦任何请求**。此前有 12 个路由只依赖这两个空操作守卫，
+**已于本批次补挂显式能力守卫**（见 `PERMISSION_MATRIX.md` D2）。
 
 ### ⚠️ 冲突 C2：运营的产品可见性
 
@@ -171,13 +172,23 @@ ASSEMBLED --hold--> HOLD       （需 ADMIN，原因 1-500 字符）
 
 ## 10. 记录修改与删除
 
-- 可编辑状态：见 `record_status_payload()`（`app.py:6188`）。
+- 可编辑状态：见 `record_status_payload()`（`app.py`）。
 - 删除**必须填写原因**（1-200 字符），写入 `TRACE_RECORD_DELETED` 审计事件。
-- 错误消息设计为「只能修改或删除自己的录入记录」。
+- 允许的角色：**ADMIN + WAREHOUSE**（`Capability.RECORD_EDIT` / `RECORD_DELETE`）。
+  运营**无权**——依据前端 `allowedViews()` 中 `my-records` 不在运营视图列表。
 
-> **⚠️ 缺口（属第六目标，详见 `PERMISSION_MATRIX.md` D3）**：
-> 该归属权检查是**死代码**（`current_operator_id()` 恒返回 `None`），
-> 因此**任何已登录角色**都可以修改或删除任意录入记录。
+> **✅ 越权面已关闭（原 D3）**：此前这三个路由只挂空操作范围守卫，
+> 任何已登录账号（含运营）都能改删任意录入记录。现已补挂显式能力守卫。
+
+> **⚠️ 仍未实现：归属权规则。** `editable_record()` 中存在
+> 「只能修改或删除自己的录入记录」的检查，但它是**死代码**
+> （`current_operator_id()` 恒返回 `None`），错误消息不可达。
+> 即：**仓管之间可以互相校对记录**，没有「只能改自己录入的」这条规则。
+>
+> **待业务确认**：这是否符合预期？若要求「只能改自己的」，
+> 需让 `current_operator_id()` 恢复返回真实 user id，
+> 并同步调整 `require_product_model_access()` 的语义——属于**业务决策**，
+> 本批次不做假设。
 
 ---
 
@@ -218,15 +229,15 @@ ASSEMBLED --hold--> HOLD       （需 ADMIN，原因 1-500 字符）
 
 ## 13. 已知缺口索引
 
-按目标编号，本文档记录到的缺口：
-
-| 编号 | 缺口 | 所在文档 |
-| --- | --- | --- |
-| 第五 | 无请求级幂等键 | `API_CONTRACT.md` §6 |
-| 第六 | 范围守卫失效、`editable_record` 归属检查死代码、鉴权分散两层 | `PERMISSION_MATRIX.md` D1-D5 |
-| 第八 | 领星 endpoint 未限制 host，存在 SSRF 风险 | `API_CONTRACT.md` §7 |
-| 第十六 | 列表接口基本不分页；导出全内存构建 | `API_CONTRACT.md` §4/§5 |
-| 第十七 | `audit_events` 非 append-only，无 hash chain | 本文档 §9 |
-| 第十八/三十九 | `manage.py` 缺少 verify/restore/integrity 命令 | 本文档 §11 |
-| 第三十五 | 错误信封无 `code`，前端解析中文 | `API_CONTRACT.md` §1 |
-| 第三十六 | 时间戳未统一为 timezone-aware UTC | `DATA_MODEL.md` §6 |
+| 编号 | 缺口 | 状态 | 所在文档 |
+| --- | --- | --- | --- |
+| 第六 | 范围守卫失效、鉴权分散两层 | ✅ 已收敛（能力表）；D5 待处理 | `PERMISSION_MATRIX.md` |
+| 第六 | 记录归属权规则未实现（仓管可互相校对） | ⚠️ 待业务确认 | 本文档 §10 |
+| 第五 | 无请求级幂等键 | ⚠️ 待处理 | `API_CONTRACT.md` §6 |
+| 第八 | 领星 endpoint 未限制 host，存在 SSRF 风险 | ⚠️ 待处理 | `API_CONTRACT.md` §7 |
+| 第十六 | 列表接口基本不分页；导出全内存构建 | ⚠️ 待处理 | `API_CONTRACT.md` §4/§5 |
+| 第十七 | `audit_events` 非 append-only，无 hash chain | ⚠️ 待处理 | 本文档 §9 |
+| 第十八/三十九 | `manage.py` 缺少 verify/restore/integrity 命令 | ⚠️ 待处理 | 本文档 §11 |
+| 第三十五 | 错误信封无 `code`，前端解析中文 | ⚠️ 待处理 | `API_CONTRACT.md` §1 |
+| 第三十六 | 时间戳未统一为 timezone-aware UTC | ⚠️ 待处理 | `DATA_MODEL.md` §6 |
+| 第三 | 迁移矩阵测试不完整（缺 12→19 … 18→19） | ⚠️ 待处理 | `DATA_MODEL.md` §1 |

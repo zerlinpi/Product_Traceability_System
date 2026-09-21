@@ -9,6 +9,8 @@ venv/
 
 # Test run artifacts (temporary databases and screenshots produced by pytest)
 tests/.pytest-tmp*/
+.pytest-*.txt
+.pytest-report.xml
 
 # Runtime data and backups
 data/*.db

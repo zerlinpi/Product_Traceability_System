@@ -1,20 +1,18 @@
 """Permission matrix characterization tests.
 
-Two layers of protection:
+Three layers of protection:
 
-1. **Source-level contract** — pins the route inventory and the known
-   authorization deviations. Adding a route, removing a guard, or moving a guard
+1. **Source-level contract** — pins the route inventory and each route's
+   effective role set. Adding a route, removing a guard, or moving a guard
    between layers fails these tests, forcing a deliberate update of
    ``docs/PERMISSION_MATRIX.md``. Run ``python tools/extract_routes.py --sync``
    after any intentional change.
 
-2. **HTTP behaviour** — exercises the real app with anonymous / ADMIN /
-   WAREHOUSE / OPERATIONS principals and asserts the status code each one gets.
+2. **Capability table invariants** — the policy in
+   ``traceability/capabilities.py`` must stay coherent.
 
-Deviations D2/D3/D4 are documented in ``docs/PERMISSION_MATRIX.md``. They are
-**pinned here on purpose**: the tests assert the CURRENT (deviating) behaviour so
-that fixing them requires an explicit, reviewable test change rather than a
-silent behaviour shift.
+3. **HTTP behaviour** — exercises the real app with anonymous / ADMIN /
+   WAREHOUSE / OPERATIONS principals and asserts the status code each one gets.
 
 Feature: batch-traceability, Property 33: 角色互斥不变式（恰好三角色）
 """
@@ -40,33 +38,113 @@ from capability_helpers import (  # noqa: E402
     make_auth_app,
 )
 
-from extract_routes import effective, extract  # noqa: E402
+from extract_routes import extract  # noqa: E402
 
+from traceability.capabilities import (  # noqa: E402
+    ROLE_ADMIN,
+    ROLE_CAPABILITIES,
+    ROLE_OPERATIONS,
+    ROLE_WAREHOUSE,
+    VALID_ROLES,
+    Capability,
+    capabilities_for_role,
+    roles_for,
+)
 
 # --------------------------------------------------------------------------
-# Pinned baseline. Update these together with docs/PERMISSION_MATRIX.md.
+# Pinned baseline. Update together with docs/PERMISSION_MATRIX.md.
 # --------------------------------------------------------------------------
 
 EXPECTED_ROUTE_COUNT = 107
 
-# Routes whose ONLY guard is a scope check. Because
-# ``auth.current_operator_id()`` returns None, ``require_product_model_access()``
-# and ``require_supplier_access()`` always pass — so these routes effectively
-# require nothing beyond being logged in.  DEVIATION D2.
-EXPECTED_SCOPE_ONLY_ROUTES = {
-    ("POST", "/api/batch-trace/query"),
-    ("GET", "/api/genealogy"),
-    ("GET", "/api/machines/<int:machine_id>/qr"),
-    ("GET", "/api/part-label-batches/<int:batch_id>"),
-    ("GET", "/api/part-label-batches/<int:batch_id>/qrcodes.zip"),
-    ("GET", "/api/part-labels/<int:label_id>/qr"),
-    ("GET", "/api/production-batches/<int:batch_id>"),
-    ("GET", "/api/production-batches/<int:batch_id>/qr"),
-    ("GET", "/api/records"),
-    ("DELETE", "/api/records/<int:record_id>"),
-    ("PUT", "/api/records/<int:record_id>"),
-    ("POST", "/api/scan"),
+ADMIN = frozenset({ROLE_ADMIN})
+ADMIN_WAREHOUSE = frozenset({ROLE_ADMIN, ROLE_WAREHOUSE})
+ADMIN_OPERATIONS = frozenset({ROLE_ADMIN, ROLE_OPERATIONS})
+EVERY_ROLE = frozenset({ROLE_ADMIN, ROLE_WAREHOUSE, ROLE_OPERATIONS})
+
+# Parameter-free routes that require a login, mapped to the roles that pass.
+# Routes carrying a no-op scope guard are included; the scope guard changes
+# nothing, which is exactly the point of DEVIATION D2.
+PARAM_FREE_ROLES: dict[tuple[str, str], frozenset[str]] = {
+    # --- ADMIN only ---
+    ("GET", "/api/audit-events"): ADMIN,
+    ("GET", "/api/dashboard"): ADMIN,
+    ("GET", "/api/product-code-batches"): ADMIN,
+    ("GET", "/api/product-code-sets"): ADMIN,
+    ("GET", "/api/settings"): ADMIN,
+    ("GET", "/api/supplier-inventory-batches"): ADMIN,
+    ("GET", "/api/users"): ADMIN,
+    ("POST", "/api/machines"): ADMIN,
+    ("POST", "/api/part-labels"): ADMIN,
+    ("POST", "/api/part-types"): ADMIN,
+    ("POST", "/api/product-families"): ADMIN,
+    ("POST", "/api/product-models"): ADMIN,
+    ("POST", "/api/supplier-inventory-batches"): ADMIN,
+    ("POST", "/api/suppliers"): ADMIN,
+    ("POST", "/api/trace-plans"): ADMIN,
+    ("POST", "/api/users"): ADMIN,
+    ("PUT", "/api/records/status/bulk"): ADMIN,
+    ("PUT", "/api/settings"): ADMIN,
+    # --- ADMIN + WAREHOUSE ---
+    ("GET", "/api/inbound-scan-records"): ADMIN_WAREHOUSE,
+    ("GET", "/api/production-orders"): ADMIN_WAREHOUSE,
+    ("GET", "/api/records"): ADMIN_WAREHOUSE,
+    ("POST", "/api/batch-entry/scan"): ADMIN_WAREHOUSE,
+    ("POST", "/api/inbound-receipts"): ADMIN_WAREHOUSE,
+    ("POST", "/api/production-batches"): ADMIN_WAREHOUSE,
+    ("POST", "/api/production-orders"): ADMIN_WAREHOUSE,
+    ("POST", "/api/production-orders/batch"): ADMIN_WAREHOUSE,
+    ("POST", "/api/scan"): ADMIN_WAREHOUSE,
+    ("POST", "/api/scan-gun/inbound"): ADMIN_WAREHOUSE,
+    ("POST", "/api/scan-gun/lookup"): ADMIN_WAREHOUSE,
+    # --- ADMIN + OPERATIONS ---
+    ("GET", "/api/inventory-sync"): ADMIN_OPERATIONS,
+    ("GET", "/api/lingxing/status"): ADMIN_OPERATIONS,
+    ("GET", "/api/purchase-orders/export"): ADMIN_OPERATIONS,
+    ("POST", "/api/inventory-sync"): ADMIN_OPERATIONS,
+    ("POST", "/api/product-images"): ADMIN_OPERATIONS,
+    ("POST", "/api/products"): ADMIN_OPERATIONS,
+    ("POST", "/api/purchase-orders"): ADMIN_OPERATIONS,
+    # --- every authenticated role ---
+    ("GET", "/api/auth/me"): EVERY_ROLE,
+    ("GET", "/api/batch-trace-records"): EVERY_ROLE,
+    ("GET", "/api/bluetooth/status"): EVERY_ROLE,
+    ("GET", "/api/genealogy"): EVERY_ROLE,
+    ("GET", "/api/inbound-receipts"): EVERY_ROLE,
+    ("GET", "/api/machines"): EVERY_ROLE,
+    ("GET", "/api/part-label-batches"): EVERY_ROLE,
+    ("GET", "/api/part-labels"): EVERY_ROLE,
+    ("GET", "/api/part-types"): EVERY_ROLE,
+    ("GET", "/api/product-attribute-columns"): EVERY_ROLE,
+    ("GET", "/api/product-families"): EVERY_ROLE,
+    ("GET", "/api/product-models"): EVERY_ROLE,
+    ("GET", "/api/production-batches"): EVERY_ROLE,
+    ("GET", "/api/products"): EVERY_ROLE,
+    ("GET", "/api/purchase-orders"): EVERY_ROLE,
+    ("GET", "/api/records/export.xlsx"): EVERY_ROLE,
+    ("GET", "/api/scan/session"): EVERY_ROLE,
+    ("GET", "/api/suppliers"): EVERY_ROLE,
+    ("GET", "/api/trace-plans"): EVERY_ROLE,
+    ("POST", "/api/auth/change-password"): EVERY_ROLE,
+    ("POST", "/api/auth/logout"): EVERY_ROLE,
+    ("POST", "/api/batch-trace/query"): EVERY_ROLE,
+    ("POST", "/api/bluetooth/discover"): EVERY_ROLE,
+    ("POST", "/api/bluetooth/read-sn"): EVERY_ROLE,
+    ("POST", "/api/scan/reset"): EVERY_ROLE,
+    ("POST", "/api/scan/undo"): EVERY_ROLE,
 }
+
+# Reachable without logging in: the two /api/ paths exempted in
+# auth.before_request, plus every non-/api/ route (the gate only inspects /api/).
+PARAM_FREE_PUBLIC = {
+    ("GET", "/"),
+    ("GET", "/favicon.ico"),
+    ("GET", "/api/health"),
+    ("POST", "/api/auth/login"),
+}
+
+PUBLIC_PATHS = {"/api/health", "/api/auth/login"}
+GATE_REJECTION_MESSAGE = "登录状态已失效，请重新登录"
 
 # Routes whose role guard lives inside the service helper they delegate to,
 # not in the handler body.  DEVIATION D5.
@@ -79,112 +157,22 @@ EXPECTED_SERVICE_GUARDED_ROUTES = {
     ("POST", "/api/production-orders/batch"),
 }
 
-# Parameter-free routes by effective access level (used for HTTP assertions).
-PARAM_FREE_ADMIN = {
-    ("GET", "/api/audit-events"),
-    ("GET", "/api/dashboard"),
-    ("GET", "/api/product-code-batches"),
-    ("GET", "/api/settings"),
-    ("GET", "/api/supplier-inventory-batches"),
-    ("GET", "/api/users"),
-    ("POST", "/api/part-types"),
-    ("POST", "/api/product-families"),
-    ("POST", "/api/product-models"),
-    ("POST", "/api/supplier-inventory-batches"),
-    ("POST", "/api/suppliers"),
-    ("POST", "/api/trace-plans"),
-    ("POST", "/api/users"),
-    ("PUT", "/api/records/status/bulk"),
-    ("PUT", "/api/settings"),
+# Routes that used to be protected only by a no-op scope guard and now carry an
+# explicit capability. This set must never grow back into "scope guard only".
+CAPABILITY_GUARDED_ROUTES = {
+    ("POST", "/api/batch-trace/query"): "TRACE_VIEW",
+    ("GET", "/api/genealogy"): "TRACE_VIEW",
+    ("GET", "/api/machines/<int:machine_id>/qr"): "TRACE_VIEW",
+    ("GET", "/api/part-label-batches/<int:batch_id>"): "TRACE_VIEW",
+    ("GET", "/api/part-label-batches/<int:batch_id>/qrcodes.zip"): "TRACE_VIEW",
+    ("GET", "/api/part-labels/<int:label_id>/qr"): "TRACE_VIEW",
+    ("GET", "/api/production-batches/<int:batch_id>"): "TRACE_VIEW",
+    ("GET", "/api/production-batches/<int:batch_id>/qr"): "TRACE_VIEW",
+    ("GET", "/api/records"): "RECORD_VIEW",
+    ("PUT", "/api/records/<int:record_id>"): "RECORD_EDIT",
+    ("DELETE", "/api/records/<int:record_id>"): "RECORD_DELETE",
+    ("POST", "/api/scan"): "LEGACY_SCAN",
 }
-
-PARAM_FREE_OPERATIONS = {
-    ("GET", "/api/inventory-sync"),
-    ("GET", "/api/lingxing/status"),
-    ("GET", "/api/purchase-orders/export"),
-    ("POST", "/api/inventory-sync"),
-    ("POST", "/api/product-images"),
-    ("POST", "/api/products"),
-    ("POST", "/api/purchase-orders"),
-}
-
-PARAM_FREE_WAREHOUSE = {
-    ("GET", "/api/inbound-scan-records"),
-    ("GET", "/api/production-orders"),
-    ("POST", "/api/inbound-receipts"),
-}
-
-PARAM_FREE_ANY_AUTHENTICATED = {
-    ("GET", "/api/auth/me"),
-    ("GET", "/api/batch-trace-records"),
-    ("GET", "/api/bluetooth/status"),
-    ("GET", "/api/inbound-receipts"),
-    ("GET", "/api/machines"),
-    ("GET", "/api/part-label-batches"),
-    ("GET", "/api/part-labels"),
-    ("GET", "/api/part-types"),
-    ("GET", "/api/product-attribute-columns"),
-    ("GET", "/api/product-families"),
-    ("GET", "/api/product-models"),
-    ("GET", "/api/production-batches"),
-    ("GET", "/api/products"),
-    ("GET", "/api/purchase-orders"),
-    ("GET", "/api/records/export.xlsx"),
-    ("GET", "/api/scan/session"),
-    ("GET", "/api/suppliers"),
-    ("GET", "/api/trace-plans"),
-    ("POST", "/api/auth/change-password"),
-    ("POST", "/api/auth/logout"),
-    ("POST", "/api/bluetooth/discover"),
-    ("POST", "/api/bluetooth/read-sn"),
-    ("POST", "/api/scan/reset"),
-    ("POST", "/api/scan/undo"),
-}
-
-# Scope guards only — no role guard at all, and the scope guard is a no-op.
-# Effectively "any authenticated".  DEVIATION D2.
-PARAM_FREE_SCOPE_PRODUCT_ONLY = {
-    ("GET", "/api/records"),
-    ("POST", "/api/batch-trace/query"),
-}
-
-PARAM_FREE_SCOPE_BOTH_ONLY = {
-    ("GET", "/api/genealogy"),
-    ("POST", "/api/scan"),
-}
-
-PARAM_FREE_SCOPE_ONLY = PARAM_FREE_SCOPE_PRODUCT_ONLY | PARAM_FREE_SCOPE_BOTH_ONLY
-
-# ADMIN plus a no-op scope guard.
-PARAM_FREE_ADMIN_SCOPED = {
-    ("POST", "/api/machines"),
-    ("POST", "/api/part-labels"),
-    ("GET", "/api/product-code-sets"),
-}
-
-# ADMIN + WAREHOUSE plus a no-op scope guard. Two of these
-# (/api/production-orders and /api/production-orders/batch) get their role guard
-# from the service layer.  DEVIATION D5.
-PARAM_FREE_WAREHOUSE_SCOPED = {
-    ("POST", "/api/batch-entry/scan"),
-    ("POST", "/api/production-batches"),
-    ("POST", "/api/production-orders"),
-    ("POST", "/api/production-orders/batch"),
-    ("POST", "/api/scan-gun/inbound"),
-    ("POST", "/api/scan-gun/lookup"),
-}
-
-# Reachable without logging in: the two /api/ paths exempted in
-# auth.before_request, plus every non-/api/ route (the gate only inspects /api/).
-PARAM_FREE_PUBLIC = {
-    ("GET", "/"),
-    ("GET", "/favicon.ico"),
-    ("GET", "/api/health"),
-    ("POST", "/api/auth/login"),
-}
-
-# Kept for the anonymous-rejection test, which works on string paths.
-PUBLIC_PATHS = {"/api/health", "/api/auth/login"}
 
 
 def _routes() -> list[dict]:
@@ -193,6 +181,10 @@ def _routes() -> list[dict]:
 
 def _keys(route: dict) -> tuple[str, str]:
     return (route["method"], route["path"])
+
+
+def _all_param_free_api_paths() -> list[tuple[str, str]]:
+    return sorted(key for key in PARAM_FREE_ROLES if key[1].startswith("/api/"))
 
 
 # --------------------------------------------------------------------------
@@ -209,14 +201,61 @@ def test_route_inventory_is_unchanged():
     )
 
 
-def test_scope_only_routes_are_exactly_the_known_deviation_set():
-    routes = _routes()
+def test_every_param_free_route_is_classified():
+    routes = [route for route in _routes() if "<" not in route["path"]]
+    actual = {_keys(route) for route in routes}
+    pinned = set(PARAM_FREE_ROLES) | PARAM_FREE_PUBLIC
+    assert actual == pinned, (
+        f"unclassified: {sorted(actual - pinned)}\n"
+        f"stale entries: {sorted(pinned - actual)}"
+    )
+
+
+def test_pinned_role_sets_match_the_source():
+    """A route with no role guard at all is reachable by every logged-in role.
+
+    ``extract_routes`` reports that as an empty ``roles`` list; normalise it here
+    so the pin expresses intent ("everyone") rather than the absence of a guard.
+    """
+    routes = {_keys(route): route for route in _routes()}
+    for key, expected in PARAM_FREE_ROLES.items():
+        route = routes[key]
+        actual = frozenset(route["roles"]) or EVERY_ROLE
+        assert actual == expected, (
+            f"{key[0]} {key[1]}: expected {sorted(expected)}, got {sorted(actual)}"
+        )
+
+
+def test_no_route_relies_solely_on_a_noop_scope_guard():
+    """DEVIATION D2 is fixed: every scope-guarded route also has a real guard.
+
+    ``require_product_model_access`` / ``require_supplier_access`` still no-op
+    because ``current_operator_id()`` returns None. Any route whose *only*
+    guard is a scope check is therefore reachable by every logged-in role, which
+    is exactly the hole that used to exist. This test keeps it closed.
+    """
+    offenders = [
+        _keys(route)
+        for route in _routes()
+        if not route["public"] and not route["roles"] and route["scopes"]
+    ]
+    assert offenders == [], (
+        f"routes guarded only by no-op scope checks: {sorted(offenders)}. "
+        "Add require_capability(...) and update docs/PERMISSION_MATRIX.md"
+    )
+
+
+def test_capability_guarded_routes_are_the_expected_set():
+    routes = {_keys(route): route for route in _routes()}
     actual = {
-        _keys(route) for route in routes if not route["roles"] and route["scopes"]
+        key: route["capabilities"]
+        for key, route in routes.items()
+        if route["capabilities"]
     }
-    assert actual == EXPECTED_SCOPE_ONLY_ROUTES, (
-        "the set of routes relying on no-op scope guards changed. If intentional, "
-        "update EXPECTED_SCOPE_ONLY_ROUTES and DEVIATION D2 in docs/PERMISSION_MATRIX.md"
+    expected = {key: [value] for key, value in CAPABILITY_GUARDED_ROUTES.items()}
+    assert actual == expected, (
+        "the set of capability-guarded routes changed. Update "
+        "CAPABILITY_GUARDED_ROUTES and docs/PERMISSION_MATRIX.md"
     )
 
 
@@ -230,71 +269,70 @@ def test_service_guarded_routes_are_exactly_the_known_set():
     )
 
 
-def test_every_param_free_route_is_classified_by_effective_access():
-    """The buckets below must exactly cover every parameter-free route."""
-    routes = [route for route in _routes() if "<" not in route["path"]]
-    actual = {_keys(route) for route in routes}
-    pinned = (
-        PARAM_FREE_ADMIN
-        | PARAM_FREE_OPERATIONS
-        | PARAM_FREE_WAREHOUSE
-        | PARAM_FREE_ANY_AUTHENTICATED
-        | PARAM_FREE_SCOPE_ONLY
-        | PARAM_FREE_ADMIN_SCOPED
-        | PARAM_FREE_WAREHOUSE_SCOPED
-        | PARAM_FREE_PUBLIC
-    )
-    assert actual == pinned, (
-        f"unclassified: {sorted(actual - pinned)}\n"
-        f"stale entries: {sorted(pinned - actual)}"
-    )
+# --------------------------------------------------------------------------
+# 2. Capability table invariants
+# --------------------------------------------------------------------------
 
 
-def test_pinned_buckets_do_not_overlap():
-    """A route must belong to exactly one access bucket."""
-    buckets = {
-        "ADMIN": PARAM_FREE_ADMIN,
-        "OPERATIONS": PARAM_FREE_OPERATIONS,
-        "WAREHOUSE": PARAM_FREE_WAREHOUSE,
-        "ANY": PARAM_FREE_ANY_AUTHENTICATED,
-        "SCOPE_ONLY": PARAM_FREE_SCOPE_ONLY,
-        "ADMIN_SCOPED": PARAM_FREE_ADMIN_SCOPED,
-        "WAREHOUSE_SCOPED": PARAM_FREE_WAREHOUSE_SCOPED,
-        "PUBLIC": PARAM_FREE_PUBLIC,
-    }
-    names = list(buckets)
-    for index, left in enumerate(names):
-        for right in names[index + 1 :]:
-            overlap = buckets[left] & buckets[right]
-            assert not overlap, f"{left} and {right} both claim {sorted(overlap)}"
+def test_capability_table_covers_exactly_the_three_roles():
+    assert set(ROLE_CAPABILITIES) == VALID_ROLES
 
 
-def test_effective_access_of_pinned_buckets_matches_source():
-    routes = {_keys(route): route for route in _routes()}
-    expectations = [
-        ("ADMIN", PARAM_FREE_ADMIN),
-        ("OPERATIONS", PARAM_FREE_OPERATIONS),
-        ("WAREHOUSE", PARAM_FREE_WAREHOUSE),
-        ("any authenticated", PARAM_FREE_ANY_AUTHENTICATED),
-        ("public (no login)", PARAM_FREE_PUBLIC),
-        ("scope:product(NOOP)", PARAM_FREE_SCOPE_PRODUCT_ONLY),
-        ("scope:product+scope:supplier(NOOP)", PARAM_FREE_SCOPE_BOTH_ONLY),
-        (
-            "ADMIN + scope:product(NOOP)",
-            {("GET", "/api/product-code-sets"), ("POST", "/api/machines")},
-        ),
-        ("ADMIN + scope:supplier(NOOP)", {("POST", "/api/part-labels")}),
-        ("WAREHOUSE + scope:product(NOOP)", PARAM_FREE_WAREHOUSE_SCOPED),
-    ]
-    for label, keys in expectations:
-        for key in keys:
-            assert effective(routes[key]) == label, (
-                f"{key[0]} {key[1]}: expected {label!r}, got {effective(routes[key])!r}"
-            )
+def test_admin_holds_every_capability():
+    """ADMIN is a superuser; express that as an invariant, not a special case."""
+    all_capabilities = frozenset(item for item in Capability)
+    assert capabilities_for_role(ROLE_ADMIN) == all_capabilities
+
+
+def test_every_capability_is_held_by_at_least_one_role():
+    orphans = [item.value for item in Capability if not roles_for(item)]
+    assert orphans == [], f"capabilities granted to nobody: {orphans}"
+
+
+def test_operations_cannot_reach_historical_records():
+    """The frontend allowedViews() gives OPERATIONS no my-records view.
+
+    The backend must agree — this is the DEVIATION D3 fix.
+    """
+    for capability in (
+        Capability.RECORD_VIEW,
+        Capability.RECORD_EDIT,
+        Capability.RECORD_DELETE,
+        Capability.RECORD_ADMIN,
+    ):
+        assert not capabilities_for_role(ROLE_OPERATIONS).issuperset({capability}), (
+            f"OPERATIONS must not hold {capability.value}"
+        )
+        assert capability in capabilities_for_role(ROLE_WAREHOUSE) or capability in capabilities_for_role(
+            ROLE_ADMIN
+        )
+
+
+def test_warehouse_cannot_reach_purchase_or_lingxing_capabilities():
+    granted = capabilities_for_role(ROLE_WAREHOUSE)
+    for capability in (
+        Capability.PURCHASE_MANAGE,
+        Capability.LINGXING_PUSH,
+        Capability.INVENTORY_SYNC,
+    ):
+        assert capability not in granted, f"WAREHOUSE must not hold {capability.value}"
+
+
+def test_operations_cannot_reach_batch_or_receipt_capabilities():
+    granted = capabilities_for_role(ROLE_OPERATIONS)
+    for capability in (
+        Capability.BATCH_GENERATE,
+        Capability.BATCH_REGISTER,
+        Capability.RECEIPT_CREATE,
+        Capability.PRODUCTION_ORDER_CREATE,
+        Capability.FINISHED_GOODS_INBOUND,
+        Capability.QUALITY_RELEASE,
+    ):
+        assert capability not in granted, f"OPERATIONS must not hold {capability.value}"
 
 
 # --------------------------------------------------------------------------
-# 2. HTTP behaviour
+# 3. HTTP behaviour
 # --------------------------------------------------------------------------
 
 
@@ -309,9 +347,9 @@ def principals(tmp_path):
     operations, operations_csrf = login(app, "pm-operations")
     return {
         "app": app,
-        "admin": (admin, admin_csrf),
-        "warehouse": (warehouse, warehouse_csrf),
-        "operations": (operations, operations_csrf),
+        "ADMIN": (admin, admin_csrf),
+        "WAREHOUSE": (warehouse, warehouse_csrf),
+        "OPERATIONS": (operations, operations_csrf),
     }
 
 
@@ -319,22 +357,6 @@ def _call(client, csrf, method: str, path: str):
     if method == "GET":
         return client.get(path)
     return client.open(path, method=method, json={}, headers={"X-CSRF-Token": csrf})
-
-
-def _all_param_free_api_paths() -> list[tuple[str, str]]:
-    return sorted(
-        key
-        for key in (
-            PARAM_FREE_ADMIN
-            | PARAM_FREE_OPERATIONS
-            | PARAM_FREE_WAREHOUSE
-            | PARAM_FREE_ANY_AUTHENTICATED
-            | PARAM_FREE_SCOPE_ONLY
-            | PARAM_FREE_ADMIN_SCOPED
-            | PARAM_FREE_WAREHOUSE_SCOPED
-        )
-        if key[1].startswith("/api/")
-    )
 
 
 @pytest.mark.parametrize("method,path", _all_param_free_api_paths())
@@ -346,9 +368,6 @@ def test_anonymous_is_rejected_with_401(principals, method, path):
         f"{method} {path} answered {response.status_code} anonymously; "
         "every /api/ route except /api/health and /api/auth/login must require login"
     )
-
-
-GATE_REJECTION_MESSAGE = "登录状态已失效，请重新登录"
 
 
 @pytest.mark.parametrize("method,path", sorted(PARAM_FREE_PUBLIC))
@@ -366,86 +385,75 @@ def test_public_routes_do_not_require_login(principals, method, path):
     )
 
 
-@pytest.mark.parametrize("method,path", sorted(PARAM_FREE_ADMIN))
-@pytest.mark.parametrize("role", ["warehouse", "operations"])
-def test_admin_only_routes_reject_other_roles_with_403(principals, role, method, path):
+@pytest.mark.parametrize("method,path", _all_param_free_api_paths())
+@pytest.mark.parametrize("role", ["ADMIN", "WAREHOUSE", "OPERATIONS"])
+def test_role_matrix(principals, role, method, path):
+    """The single authoritative matrix: every role, every param-free route."""
+    allowed = role in PARAM_FREE_ROLES[(method, path)]
     client, csrf = principals[role]
     response = _call(client, csrf, method, path)
-    assert response.status_code == 403, (
-        f"{role} got {response.status_code} on ADMIN-only {method} {path}"
-    )
+    if allowed:
+        assert response.status_code not in {401, 403}, (
+            f"{role} was denied on {method} {path} ({response.status_code}) but the "
+            "pinned matrix allows it"
+        )
+    else:
+        assert response.status_code == 403, (
+            f"{role} got {response.status_code} on {method} {path}; expected 403"
+        )
 
 
-@pytest.mark.parametrize("method,path", sorted(PARAM_FREE_OPERATIONS))
-def test_operations_only_routes_reject_warehouse_with_403(principals, method, path):
-    client, csrf = principals["warehouse"]
-    response = _call(client, csrf, method, path)
-    assert response.status_code == 403, (
-        f"warehouse got {response.status_code} on OPERATIONS route {method} {path}"
-    )
+# --------------------------------------------------------------------------
+# 4. Fixed deviations, pinned as behaviour
+# --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("method,path", sorted(PARAM_FREE_WAREHOUSE))
-def test_warehouse_only_routes_reject_operations_with_403(principals, method, path):
-    client, csrf = principals["operations"]
-    response = _call(client, csrf, method, path)
-    assert response.status_code == 403, (
-        f"operations got {response.status_code} on WAREHOUSE route {method} {path}"
-    )
+def test_records_family_is_closed_to_operations(principals):
+    """DEVIATION D3, now fixed.
 
-
-@pytest.mark.parametrize("method,path", sorted(PARAM_FREE_ANY_AUTHENTICATED))
-@pytest.mark.parametrize("role", ["admin", "warehouse", "operations"])
-def test_any_authenticated_routes_admit_every_role(principals, role, method, path):
-    """DEVIATION D2/D6: these carry no role guard at all.
-
-    They are asserted to admit all three roles. A 401/403 here would mean a
-    guard appeared — good, but update the matrix first.
+    ``editable_record()``'s owner check is still dead code, but the route no
+    longer depends on it: ``require_capability(RECORD_EDIT)`` rejects OPERATIONS
+    before the lookup runs, so the answer is 403 rather than 404.
     """
-    client, csrf = principals[role]
-    response = _call(client, csrf, method, path)
-    assert response.status_code not in {401, 403}, (
-        f"{role} was denied on {method} {path} ({response.status_code}); "
-        "a role guard was added — update docs/PERMISSION_MATRIX.md"
+    client, csrf = principals["OPERATIONS"]
+    response = client.put(
+        "/api/records/999999",
+        json={"remarks": "校对", "partCodes": ["NOT-A-REAL-CODE"]},
+        headers={"X-CSRF-Token": csrf},
     )
-
-
-@pytest.mark.parametrize("method,path", sorted(PARAM_FREE_SCOPE_ONLY))
-@pytest.mark.parametrize("role", ["warehouse", "operations"])
-def test_scope_only_routes_admit_non_admin_roles(principals, role, method, path):
-    """DEVIATION D2 pinned: scope-only routes admit WAREHOUSE and OPERATIONS."""
-    client, csrf = principals[role]
-    response = _call(client, csrf, method, path)
-    assert response.status_code not in {401, 403}, (
-        f"{role} was denied on scope-only {method} {path} ({response.status_code}); "
-        "scope enforcement was re-enabled — update DEVIATION D2"
-    )
-
-
-@pytest.mark.parametrize("method,path", sorted(PARAM_FREE_ADMIN_SCOPED))
-@pytest.mark.parametrize("role", ["warehouse", "operations"])
-def test_admin_scoped_routes_reject_non_admin_roles(principals, role, method, path):
-    """The role guard is real even though the paired scope guard is a no-op."""
-    client, csrf = principals[role]
-    response = _call(client, csrf, method, path)
     assert response.status_code == 403, (
-        f"{role} got {response.status_code} on ADMIN route {method} {path}"
+        f"expected 403 for OPERATIONS, got {response.status_code}"
+    )
+
+    deleted = client.delete(
+        "/api/records/999999",
+        json={"reason": "测试"},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert deleted.status_code == 403, (
+        f"expected 403 for OPERATIONS on delete, got {deleted.status_code}"
     )
 
 
-@pytest.mark.parametrize("method,path", sorted(PARAM_FREE_WAREHOUSE_SCOPED))
-def test_warehouse_scoped_routes_reject_operations(principals, method, path):
-    """Covers the two service-layer-guarded production-order routes (D5)."""
-    client, csrf = principals["operations"]
-    response = _call(client, csrf, method, path)
+def test_records_family_still_reachable_by_warehouse(principals):
+    """The guard must not over-restrict: WAREHOUSE keeps access."""
+    client, csrf = principals["WAREHOUSE"]
+    response = client.put(
+        "/api/records/999999",
+        json={"remarks": "校对", "partCodes": ["NOT-A-REAL-CODE"]},
+        headers={"X-CSRF-Token": csrf},
+    )
+    assert response.status_code == 404, (
+        f"WAREHOUSE should reach the lookup and get 404, got {response.status_code}"
+    )
+
+
+def test_legacy_scan_is_closed_to_operations(principals):
+    client, csrf = principals["OPERATIONS"]
+    response = client.post("/api/scan", json={}, headers={"X-CSRF-Token": csrf})
     assert response.status_code == 403, (
-        f"operations got {response.status_code} on WAREHOUSE route {method} {path}"
+        f"expected 403 for OPERATIONS on /api/scan, got {response.status_code}"
     )
-
-
-# --------------------------------------------------------------------------
-# 3. Deviations pinned on purpose
-# --------------------------------------------------------------------------
 
 
 def test_deviation_d5_service_layer_guard_is_effective(principals):
@@ -453,7 +461,7 @@ def test_deviation_d5_service_layer_guard_is_effective(principals):
 
     This is the counter-example that makes a handler-only audit wrong.
     """
-    client, csrf = principals["warehouse"]
+    client, csrf = principals["WAREHOUSE"]
     response = client.post(
         "/api/batch-trace-records/999999/pass", headers={"X-CSRF-Token": csrf}
     )
@@ -462,52 +470,16 @@ def test_deviation_d5_service_layer_guard_is_effective(principals):
     )
 
 
-def test_deviation_d2_scope_only_write_is_reachable_by_operations(principals):
-    """DEVIATION D2: ``POST /api/scan`` is guarded only by no-op scope checks."""
-    client, csrf = principals["operations"]
-    response = client.post("/api/scan", json={}, headers={"X-CSRF-Token": csrf})
-    assert response.status_code != 403, (
-        "operations reached a scope-only write route; if a real guard was added, "
-        "remove this deviation pin and update docs/PERMISSION_MATRIX.md D2"
-    )
+def test_deviation_d1_role_guards_share_one_implementation():
+    """DEVIATION D1, now fixed: the two guards are literally the same function."""
+    from traceability import auth
 
-
-def test_deviation_d3_record_edit_has_no_role_guard(principals):
-    """DEVIATION D3: ``PUT /api/records/<id>`` has no effective role guard.
-
-    ``editable_record()`` contains an owner check, but it is dead code because
-    ``current_operator_id()`` always returns None. A missing record therefore
-    yields 404 (not 403) for OPERATIONS — proving no role check runs first.
-    """
-    client, csrf = principals["operations"]
-    response = client.put(
-        "/api/records/999999",
-        json={"remarks": "校对", "partCodes": ["NOT-A-REAL-CODE"]},
-        headers={"X-CSRF-Token": csrf},
-    )
-    assert response.status_code == 404, (
-        f"expected 404 (no role guard, lookup first), got {response.status_code}. "
-        "If a guard was added, update DEVIATION D3 in docs/PERMISSION_MATRIX.md"
-    )
-
-
-def test_deviation_d4_scope_tables_do_not_gate_access(principals, tmp_path):
-    """DEVIATION D4: scope rows are stored and echoed but grant nothing.
-
-    A WAREHOUSE user with NO product scope row still reaches a product-scoped
-    route, because the scope guard short-circuits on ``current_operator_id() is None``.
-    """
-    client, csrf = principals["warehouse"]
-    response = client.get("/api/records")
-    assert response.status_code != 403, (
-        "warehouse was denied a scope-guarded route; scope enforcement was "
-        "re-enabled — update DEVIATION D2/D4 in docs/PERMISSION_MATRIX.md"
-    )
+    assert auth.require_admin_or_warehouse is auth.require_warehouse
 
 
 def test_scope_ids_are_still_echoed_by_the_api(principals):
     """DEVIATION D4 (API surface): user payloads still advertise scope ids."""
-    client, csrf = principals["admin"]
+    client, csrf = principals["ADMIN"]
     created = client.post(
         "/api/users",
         json={
@@ -528,15 +500,12 @@ def test_scope_ids_are_still_echoed_by_the_api(principals):
 
 
 def test_role_guards_are_exactly_three_distinct_behaviours():
-    """DEVIATION D1: require_warehouse() and require_admin_or_warehouse() are identical."""
+    """The three guards must stay distinguishable, and VALID_ROLES must not grow."""
     from traceability import auth
 
-    assert auth.VALID_ROLES == {"ADMIN", "WAREHOUSE", "OPERATIONS"}
+    assert VALID_ROLES == {"ADMIN", "WAREHOUSE", "OPERATIONS"}
 
     def denies(guard, role):
-        class _User(dict):
-            pass
-
         original = auth.current_user
         auth.current_user = lambda: {"id": 1, "role": role, "display_name": role}
         try:
@@ -547,7 +516,35 @@ def test_role_guards_are_exactly_three_distinct_behaviours():
         finally:
             auth.current_user = original
 
-    for role in ("ADMIN", "WAREHOUSE", "OPERATIONS"):
-        assert denies(auth.require_warehouse, role) == denies(
-            auth.require_admin_or_warehouse, role
-        ), "D1 no longer holds: the two guards diverged — update the matrix"
+    for role in VALID_ROLES:
+        assert denies(auth.require_admin, role) == (role != ROLE_ADMIN)
+        assert denies(auth.require_warehouse, role) == (role == ROLE_OPERATIONS)
+        assert denies(auth.require_operations, role) == (role == ROLE_WAREHOUSE)
+
+
+def test_require_capability_rejects_a_role_lacking_the_capability():
+    from traceability import auth
+
+    original = auth.current_user
+    auth.current_user = lambda: {"id": 1, "role": ROLE_OPERATIONS, "display_name": "op"}
+    try:
+        with pytest.raises(auth.AuthError) as error:
+            auth.require_capability(Capability.RECORD_DELETE)
+        assert error.value.status == 403
+        # A capability the role does hold must pass.
+        auth.require_capability(Capability.PURCHASE_MANAGE)
+    finally:
+        auth.current_user = original
+
+
+def test_require_capability_returns_401_when_not_logged_in():
+    from traceability import auth
+
+    original = auth.current_user
+    auth.current_user = lambda: None
+    try:
+        with pytest.raises(auth.AuthError) as error:
+            auth.require_capability(Capability.TRACE_VIEW)
+        assert error.value.status == 401
+    finally:
+        auth.current_user = original

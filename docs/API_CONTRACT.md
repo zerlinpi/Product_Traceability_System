@@ -178,6 +178,24 @@ GET /api/production-batches/<int:batch_id>/qr?page=N
 4. 错误信封 `{ok, message}` 必须保持；新增 `code` / `details` / `requestId` 只能作为**附加字段**。
 5. 历史 `OPERATOR` 角色在 v14 已映射为 `WAREHOUSE`；数据库 CHECK 约束会拒绝新的 `OPERATOR`。
 
+### ⚠️ 已发生的有意授权变更（2026-09-21）
+
+以下 4 个路由的**授权结果发生变化**：`OPERATIONS` 由「可访问」变为 `403`。
+不是 bug 修复的副作用，而是把后端对齐到前端 `allowedViews()` 既有策略。
+
+| Method | Path | 变更前 | 变更后 |
+| --- | --- | --- | --- |
+| `GET` | `/api/records` | 任何已登录 | ADMIN + WAREHOUSE |
+| `PUT` | `/api/records/<int:record_id>` | 任何已登录 | ADMIN + WAREHOUSE |
+| `DELETE` | `/api/records/<int:record_id>` | 任何已登录 | ADMIN + WAREHOUSE |
+| `POST` | `/api/scan` | 任何已登录 | ADMIN + WAREHOUSE |
+
+影响评估：`OPERATIONS` 前端从未渲染 `my-records` / `scan-gun` 视图，
+因此**正常 UI 流程不受影响**；只有直接调用 API 的运营账号会从「静默成功」变为 403。
+
+其余 8 个原本只挂空操作范围守卫的路由（追溯 / 族谱 / 二维码读取）
+**行为不变**，只是补挂了显式的 `TRACE_VIEW` 能力，使意图可见。
+
 ---
 
 ## 9. 重新生成路由清单

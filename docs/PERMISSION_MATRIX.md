@@ -16,6 +16,40 @@
 
 数据库 `user_version = 19`。
 
+## 0. 能力表（Capability Matrix）
+
+角色判断的**唯一权威来源**是 `traceability/capabilities.py`：
+
+```python
+class Capability(str, Enum):
+    PRODUCT_MANAGE, SUPPLIER_MANAGE, USER_MANAGE, SETTINGS_MANAGE,
+    INVENTORY_MANAGE, LEGACY_QR_MANAGE, BATCH_GENERATE, BATCH_REGISTER,
+    LEGACY_SCAN, QUALITY_RELEASE, RECEIPT_CREATE, PRODUCTION_ORDER_CREATE,
+    FINISHED_GOODS_INBOUND, PURCHASE_MANAGE, LINGXING_PUSH, INVENTORY_SYNC,
+    OPERATIONS_PRODUCT_MANAGE, RECORD_VIEW, RECORD_EDIT, RECORD_DELETE,
+    RECORD_ADMIN, TRACE_VIEW, DASHBOARD_VIEW, AUDIT_VIEW, BLUETOOTH_USE
+
+ROLE_CAPABILITIES = {
+    ADMIN:      _ADMIN_ONLY | _WAREHOUSE | _OPERATIONS | _SHARED,   # 25 项（超集）
+    WAREHOUSE:  _WAREHOUSE | _SHARED,                               # 11 项
+    OPERATIONS: _OPERATIONS | _SHARED,                              #  6 项
+}
+```
+
+**ADMIN 持有全部能力**——这一点在表里显式表达，而不是在检查函数里特判。
+
+该模块**不依赖 Flask**，因此静态工具（`tools/extract_routes.py`）与测试都能导入它，
+从而保证本矩阵不会与代码再次脱节。
+
+守卫函数：
+
+```python
+require_capability(*capabilities)   # 推荐；要求同时具备全部能力
+require_admin()                     # 仅 ADMIN
+require_warehouse()                 # ADMIN + WAREHOUSE（require_admin_or_warehouse 现为其别名）
+require_operations()                # ADMIN + OPERATIONS
+```
+
 ---
 
 ## 1. 鉴权实际发生在哪三层
@@ -47,14 +81,15 @@ require_admin_or_warehouse()  # ADMIN + WAREHOUSE  ← 与上一行完全等价
 require_operations()          # ADMIN + OPERATIONS
 ```
 
-> **⚠️ 偏差 D1：`require_warehouse()` 与 `require_admin_or_warehouse()` 实现完全相同**
-> （`auth.py:114-123`），两者都判断 `role not in {ADMIN, WAREHOUSE}`。两个名字、一种行为，
-> 容易被误读为存在「仅仓管、不含管理员」的权限级别。**不存在该级别。**
+> **✅ D1 已修复：`require_warehouse()` 与 `require_admin_or_warehouse()` 现为同一个函数**
+> 两者此前是两份实现相同的代码（都判断 `role not in {ADMIN, WAREHOUSE}`）。
+> 现已合并为一份实现加一个别名，无法再各自漂移。
+> 注意语义：**不存在「仅仓管、不含管理员」的权限级别**——ADMIN 通过所有角色守卫。
 
 ### 第三层：范围守卫（**当前全部为空操作**）
 
 ```python
-current_operator_id()          # 恒返回 None（auth.py:132）
+current_operator_id()          # 恒返回 None（auth.py）
 require_product_model_access() # user_id is None → 直接 return，不检查
 require_supplier_access()      # user_id is None → 直接 return，不检查
 ```
@@ -62,9 +97,16 @@ require_supplier_access()      # user_id is None → 直接 return，不检查
 `current_operator_id()` 的注释明确说明这是**有意设计**：仓管不再按产品/供应商授权，
 改为可操作全部产品。**副作用**是这两个范围守卫变成空操作，且范围表不再拦任何请求。
 
-> **⚠️ 偏差 D2：12 个路由只挂了空操作的范围守卫**
-> 这些路由既没有角色守卫、范围守卫又必然放行，因此**实际上只要求「已登录」**。
-> 见下方第 3 节的完整清单。
+> **✅ D2 已修复**：这 12 个路由现已全部改挂显式 `require_capability(...)`，
+> **不再有任何路由只依赖空操作守卫**。
+> 范围守卫调用本身保留（API 兼容脚手架），但已不是任何路由的唯一防线。
+> `tests/test_permission_matrix.py::test_no_route_relies_solely_on_a_noop_scope_guard`
+> 会持续守住这一点。
+
+### 第四层（本批次新增）：能力守卫
+
+`require_capability(Capability.X)` 查表判定，策略集中在 `traceability/capabilities.py`。
+下表 `Capability` 列显示每个路由要求的能力。
 
 ---
 
@@ -84,51 +126,89 @@ require_supplier_access()      # user_id is None → 直接 return，不检查
 
 ### 总量分布
 
-| 类别 | 数量 |
-| --- | --- |
-| 总路由 | **107** |
-| 无任何角色守卫（含 public 与 scope-only） | **43** |
-| 完全无任何守卫（仅需登录） | **31** |
-| 仅靠空操作范围守卫 | **12** |
-| 完全公开（无需登录） | **4** |
-| 守卫位于 service 层 | **6** |
-| 写操作路由 | **42** |
+| 类别 | 数量 | 说明 |
+| --- | --- | --- |
+| 总路由 | **107** | |
+| 完全公开（无需登录） | **4** | `/`、`/favicon.ico`、`/api/health`、`/api/auth/login` |
+| 无任何角色守卫（仅需登录） | **27** | |
+| **仅靠空操作范围守卫** | **0** | ✅ 已修复（原为 12） |
+| 显式能力守卫 | **12** | 由 `require_capability` 保护 |
+| 守卫位于 service 层 | **6** | |
+| 写操作路由 | **42** | |
 
 ---
 
 ## 3. 已记录的冲突与偏差
 
-以下均为**经源码核实**的事实，不是推测。按「以现有生产行为 + 测试为基线」原则，
-**本文档记录现状，不擅自变更行为**；变更属于第六目标（权限系统重新收敛）。
+以下均为**经源码核实**的事实，不是推测。
+✅ 表示本批次已修复；⚠️ 表示仍然存在，属后续批次。
 
-### D1 — 两个角色守卫完全等价
-`require_warehouse()` ≡ `require_admin_or_warehouse()`。见第 1 节。
+| 编号 | 状态 | 问题 |
+| --- | --- | --- |
+| D1 | ✅ 已修复 | 两个角色守卫实现相同 → 合并为一份实现 + 别名 |
+| D2 | ✅ 已修复 | 12 个路由仅靠空操作范围守卫 → 补挂显式能力 |
+| D3 | ⚠️ 部分修复 | 越权面已关闭；「归属权」规则仍未实现，待业务确认 |
+| D4 | ⚠️ 待处理 | 范围授权表仍写入并回显，但不参与鉴权 |
+| D5 | ⚠️ 待处理 | 鉴权分散在 handler 与 service 两层 |
+| D6 | ✅ 已修正 | 文档称仓管只见分配产品（实为全部） |
+| D7 | ✅ 已修正 | 文档数据库版本漂移（15 / 14 → 19） |
+| D8 | ℹ️ 事实 | 部署库停在 v18，代码链已到 19 |
 
-### D2 — 范围守卫全部失效，12 个路由实际仅需登录
-`current_operator_id()` 恒返回 `None`，导致：
+### ✅ D1 — 两个角色守卫完全等价（已合并）
+见第 1 节。
 
-- `require_product_model_access()` 空转
-- `require_supplier_access()` 空转
+### ✅ D2 — 范围守卫失效导致的「实际仅需登录」已修复
 
-仅靠范围守卫（无角色守卫）的路由共 **12 个**，其中 **3 个是写操作**：
+`current_operator_id()` 恒返回 `None`，导致 `require_product_model_access()` 与
+`require_supplier_access()` 空转。修复前，12 个路由**只**依赖这两个空操作守卫，
+因此任何已登录账号（含运营）都能访问，其中 3 个是写操作。
 
-| Method | Path | 名义守卫 | 写 |
+**修复方式**：为这 12 个路由补挂显式 `require_capability(...)`。
+范围守卫调用保留（兼容脚手架），但不再是任何路由的唯一防线。
+
+| Method | Path | 新增能力 | 修复后的有效访问 |
 | --- | --- | --- | --- |
-| `POST` | `/api/batch-trace/query` | scope:product | |
-| `GET` | `/api/genealogy` | scope:product + scope:supplier | |
-| `GET` | `/api/machines/<int:machine_id>/qr` | scope:product | |
-| `GET` | `/api/part-label-batches/<int:batch_id>` | scope:supplier | |
-| `GET` | `/api/part-label-batches/<int:batch_id>/qrcodes.zip` | scope:supplier | |
-| `GET` | `/api/part-labels/<int:label_id>/qr` | scope:supplier | |
-| `GET` | `/api/production-batches/<int:batch_id>` | scope:product | |
-| `GET` | `/api/production-batches/<int:batch_id>/qr` | scope:product | |
-| `GET` | `/api/records` | scope:product | |
-| `DELETE` | `/api/records/<int:record_id>` | scope:product | **写** |
-| `PUT` | `/api/records/<int:record_id>` | scope:product + scope:supplier | **写** |
-| `POST` | `/api/scan` | scope:product + scope:supplier | **写** |
+| `POST` | `/api/batch-trace/query` | `TRACE_VIEW` | 全体角色（行为不变，意图显式化） |
+| `GET` | `/api/genealogy` | `TRACE_VIEW` | 全体角色（行为不变） |
+| `GET` | `/api/machines/<int:machine_id>/qr` | `TRACE_VIEW` | 全体角色（行为不变） |
+| `GET` | `/api/part-label-batches/<int:batch_id>` | `TRACE_VIEW` | 全体角色（行为不变） |
+| `GET` | `/api/part-label-batches/<int:batch_id>/qrcodes.zip` | `TRACE_VIEW` | 全体角色（行为不变） |
+| `GET` | `/api/part-labels/<int:label_id>/qr` | `TRACE_VIEW` | 全体角色（行为不变） |
+| `GET` | `/api/production-batches/<int:batch_id>` | `TRACE_VIEW` | 全体角色（行为不变） |
+| `GET` | `/api/production-batches/<int:batch_id>/qr` | `TRACE_VIEW` | 全体角色（行为不变） |
+| `GET` | `/api/records` | `RECORD_VIEW` | **ADMIN + WAREHOUSE**（运营被拒） |
+| `PUT` | `/api/records/<int:record_id>` | `RECORD_EDIT` | **ADMIN + WAREHOUSE**（运营被拒） |
+| `DELETE` | `/api/records/<int:record_id>` | `RECORD_DELETE` | **ADMIN + WAREHOUSE**（运营被拒） |
+| `POST` | `/api/scan` | `LEGACY_SCAN` | **ADMIN + WAREHOUSE**（运营被拒） |
 
-另有 **31 个路由完全没有任何角色或范围守卫**（仅需登录，其中 4 个连登录都不需要），
-合计 **43 个路由不区分角色**。
+**4 个路由的行为发生了有意变更**（运营失去访问）：`GET /api/records`、
+`PUT`/`DELETE /api/records/<id>`、`POST /api/scan`。
+
+依据不是猜测，而是前端 `allowedViews()`（`static/app_v2.js:227`）：
+`my-records` 只出现在 ADMIN 与 WAREHOUSE 的视图列表，OPERATIONS 没有；
+`scan-gun` 同样只在 ADMIN 与 WAREHOUSE。后端此前与前端策略不一致，现已对齐。
+
+### ✅ D3 — `editable_record()` 归属权检查仍为死代码，但已不再构成越权
+
+`editable_record()`（`app.py`）中：
+
+```python
+operator_id = current_operator_id()
+if operator_id is not None and row["completed_by_user_id"] != operator_id:
+    raise ApiError("只能修改或删除自己的录入记录", 403)
+```
+
+`operator_id` 恒为 `None`，该分支**永不进入**，错误消息不可达。
+即：**没有**「只能改自己的记录」这条规则，任何有权限的角色都能改任意记录。
+
+D2 修复后，`PUT`/`DELETE /api/records/<id>` 已在入口处按能力拒绝运营，
+**越权面已关闭**；但「归属权」这一层仍未实现。是否要按 `completed_by_user_id`
+限制到录入人本人，属于**业务决策**，需要确认后再做——本批次**不做假设**。
+
+> 待确认问题：仓管之间是否应当互相校对记录？
+> 当前实现是「可以」（只要角色允许）。若业务要求「只能改自己录入的」，
+> 则需让 `current_operator_id()` 恢复返回真实 user id，并同步调整
+> `require_product_model_access()` 的语义。
 
 ### D3 — `editable_record()` 的归属权检查是死代码
 `app.py:6170` `editable_record()` 中：
@@ -200,115 +280,115 @@ handler 里，`/pass` 写在 service 里。只看 handler 会误判 `/pass` 无�
 ## 4. 完整路由表（生成）
 
 <!-- BEGIN GENERATED ROUTE TABLE -->
-| Method | Path | Effective access | Guard location | Writes |
-| --- | --- | --- | --- | --- |
-| `GET` | `/` | public (no login) | handler |  |
-| `GET` | `/api/audit-events` | ADMIN | handler |  |
-| `POST` | `/api/auth/change-password` | any authenticated | handler | yes |
-| `POST` | `/api/auth/login` | public (no login) | handler | yes |
-| `POST` | `/api/auth/logout` | any authenticated | handler |  |
-| `GET` | `/api/auth/me` | any authenticated | handler |  |
-| `POST` | `/api/batch-entry/scan` | WAREHOUSE + scope:product(NOOP) | handler | yes |
-| `GET` | `/api/batch-trace-records` | any authenticated | handler |  |
-| `POST` | `/api/batch-trace-records/<int:record_id>/hold` | ADMIN | handler | yes |
-| `POST` | `/api/batch-trace-records/<int:record_id>/pass` | ADMIN | service: success, transition_batch_quality | yes |
-| `POST` | `/api/batch-trace/query` | scope:product(NOOP) | handler |  |
-| `POST` | `/api/bluetooth/discover` | any authenticated | handler |  |
-| `POST` | `/api/bluetooth/read-sn` | any authenticated | handler |  |
-| `GET` | `/api/bluetooth/status` | any authenticated | handler |  |
-| `GET` | `/api/dashboard` | ADMIN | handler |  |
-| `GET` | `/api/genealogy` | scope:product+scope:supplier(NOOP) | handler |  |
-| `GET` | `/api/health` | public (no login) | handler |  |
-| `GET` | `/api/inbound-receipts` | any authenticated | handler |  |
-| `POST` | `/api/inbound-receipts` | WAREHOUSE | handler | yes |
-| `GET` | `/api/inbound-receipts/<int:receipt_id>` | any authenticated | handler |  |
-| `POST` | `/api/inbound-receipts/<int:receipt_id>/push` | OPERATIONS | handler | yes |
-| `GET` | `/api/inbound-receipts/<int:receipt_id>/sync-status` | OPERATIONS | handler |  |
-| `GET` | `/api/inbound-scan-records` | WAREHOUSE | handler |  |
-| `GET` | `/api/inventory-sync` | OPERATIONS | handler |  |
-| `POST` | `/api/inventory-sync` | OPERATIONS | handler | yes |
-| `GET` | `/api/lingxing/status` | OPERATIONS | handler |  |
-| `GET` | `/api/machines` | any authenticated | handler |  |
-| `POST` | `/api/machines` | ADMIN + scope:product(NOOP) | handler | yes |
-| `GET` | `/api/machines/<int:machine_id>/qr` | scope:product(NOOP) | handler |  |
-| `GET` | `/api/part-label-batches` | any authenticated | handler |  |
-| `GET` | `/api/part-label-batches/<int:batch_id>` | scope:supplier(NOOP) | handler |  |
-| `GET` | `/api/part-label-batches/<int:batch_id>/qrcodes.zip` | scope:supplier(NOOP) | handler |  |
-| `GET` | `/api/part-labels` | any authenticated | handler |  |
-| `POST` | `/api/part-labels` | ADMIN + scope:supplier(NOOP) | handler | yes |
-| `PUT` | `/api/part-labels/<int:label_id>` | ADMIN + scope:supplier(NOOP) | handler | yes |
-| `GET` | `/api/part-labels/<int:label_id>/qr` | scope:supplier(NOOP) | handler |  |
-| `GET` | `/api/part-types` | any authenticated | handler |  |
-| `POST` | `/api/part-types` | ADMIN | handler | yes |
-| `PUT` | `/api/part-types/<int:part_type_id>` | ADMIN | handler |  |
-| `GET` | `/api/product-attribute-columns` | any authenticated | handler |  |
-| `GET` | `/api/product-code-batches` | ADMIN | handler |  |
-| `GET` | `/api/product-code-batches/<int:generation_batch_id>` | ADMIN | handler |  |
-| `GET` | `/api/product-code-batches/<int:generation_batch_id>/qrcodes.zip` | ADMIN | handler |  |
-| `GET` | `/api/product-code-sets` | ADMIN + scope:product(NOOP) | handler |  |
-| `GET` | `/api/product-code-sets/<int:code_set_id>/qrcodes.zip` | ADMIN | handler |  |
-| `GET` | `/api/product-families` | any authenticated | handler |  |
-| `POST` | `/api/product-families` | ADMIN | handler | yes |
-| `PUT` | `/api/product-families/<int:family_id>` | ADMIN | handler | yes |
-| `POST` | `/api/product-images` | OPERATIONS | handler |  |
-| `GET` | `/api/product-images/<path:filename>` | any authenticated | handler |  |
-| `GET` | `/api/product-models` | any authenticated | handler |  |
-| `POST` | `/api/product-models` | ADMIN | handler | yes |
-| `DELETE` | `/api/product-models/<int:model_id>` | OPERATIONS | handler | yes |
-| `PUT` | `/api/product-models/<int:model_id>` | ADMIN | handler | yes |
-| `GET` | `/api/production-batches` | any authenticated | handler |  |
-| `POST` | `/api/production-batches` | WAREHOUSE + scope:product(NOOP) | handler | yes |
-| `GET` | `/api/production-batches/<int:batch_id>` | scope:product(NOOP) | handler |  |
-| `GET` | `/api/production-batches/<int:batch_id>/qr` | scope:product(NOOP) | handler |  |
-| `GET` | `/api/production-orders` | WAREHOUSE | handler |  |
-| `POST` | `/api/production-orders` | WAREHOUSE + scope:product(NOOP) | service: business_id, generate_production_order_for_po, product_model_for_purch | yes |
-| `GET` | `/api/production-orders/<int:production_order_id>` | WAREHOUSE + scope:product(NOOP) | handler |  |
-| `GET` | `/api/production-orders/<int:production_order_id>/qr` | WAREHOUSE + scope:product(NOOP) | handler |  |
-| `POST` | `/api/production-orders/batch` | WAREHOUSE + scope:product(NOOP) | service: business_id, generate_production_order_for_po, product_model_for_purch | yes |
-| `GET` | `/api/products` | any authenticated | handler |  |
-| `POST` | `/api/products` | OPERATIONS | handler | yes |
-| `PUT` | `/api/products/<int:product_model_id>` | OPERATIONS | handler | yes |
-| `POST` | `/api/products/<int:product_model_id>/code-sets` | ADMIN | handler | yes |
-| `GET` | `/api/products/<int:product_model_id>/qrcodes.zip` | ADMIN | handler |  |
-| `GET` | `/api/purchase-orders` | any authenticated | handler |  |
-| `POST` | `/api/purchase-orders` | OPERATIONS | handler | yes |
-| `DELETE` | `/api/purchase-orders/<int:purchase_order_id>` | OPERATIONS | handler | yes |
-| `GET` | `/api/purchase-orders/<int:purchase_order_id>` | any authenticated | handler |  |
-| `PUT` | `/api/purchase-orders/<int:purchase_order_id>` | OPERATIONS | handler | yes |
-| `GET` | `/api/purchase-orders/<int:purchase_order_id>/export` | OPERATIONS | handler |  |
-| `GET` | `/api/purchase-orders/<int:purchase_order_id>/factory-progress` | OPERATIONS | handler |  |
-| `POST` | `/api/purchase-orders/<int:purchase_order_id>/push` | OPERATIONS | service: ensure_lingxing_operation_ready, external_identifier, guard_is_stale,  | yes |
-| `GET` | `/api/purchase-orders/<int:purchase_order_id>/sync-status` | OPERATIONS | handler |  |
-| `GET` | `/api/purchase-orders/export` | OPERATIONS | handler |  |
-| `GET` | `/api/records` | scope:product(NOOP) | handler |  |
-| `DELETE` | `/api/records/<int:record_id>` | scope:product(NOOP) | service: editable_record, success | yes |
-| `PUT` | `/api/records/<int:record_id>` | scope:product+scope:supplier(NOOP) | service: editable_record, success | yes |
-| `PUT` | `/api/records/<int:record_id>/status` | ADMIN | handler | yes |
-| `GET` | `/api/records/export.xlsx` | any authenticated | handler |  |
-| `PUT` | `/api/records/status/bulk` | ADMIN | handler | yes |
-| `POST` | `/api/scan` | scope:product+scope:supplier(NOOP) | handler | yes |
-| `POST` | `/api/scan-gun/inbound` | WAREHOUSE + scope:product(NOOP) | handler | yes |
-| `POST` | `/api/scan-gun/lookup` | WAREHOUSE + scope:product(NOOP) | handler |  |
-| `POST` | `/api/scan/reset` | any authenticated | handler | yes |
-| `GET` | `/api/scan/session` | any authenticated | handler |  |
-| `POST` | `/api/scan/undo` | any authenticated | handler | yes |
-| `GET` | `/api/settings` | ADMIN | handler |  |
-| `PUT` | `/api/settings` | ADMIN | handler | yes |
-| `GET` | `/api/supplier-inventory-batches` | ADMIN | handler |  |
-| `POST` | `/api/supplier-inventory-batches` | ADMIN | handler | yes |
-| `PUT` | `/api/supplier-inventory-batches/<int:inventory_batch_id>` | ADMIN | handler | yes |
-| `GET` | `/api/supplier-inventory-batches/<int:inventory_batch_id>/forward-trace` | ADMIN | handler |  |
-| `GET` | `/api/supplier-inventory-batches/<int:inventory_batch_id>/movements` | ADMIN | handler |  |
-| `GET` | `/api/suppliers` | any authenticated | handler |  |
-| `POST` | `/api/suppliers` | ADMIN | handler | yes |
-| `GET` | `/api/suppliers/<int:supplier_id>` | ADMIN | handler |  |
-| `PUT` | `/api/suppliers/<int:supplier_id>` | ADMIN | handler |  |
-| `GET` | `/api/trace-plans` | any authenticated | handler |  |
-| `POST` | `/api/trace-plans` | ADMIN | handler | yes |
-| `GET` | `/api/users` | ADMIN | handler |  |
-| `POST` | `/api/users` | ADMIN | handler | yes |
-| `PUT` | `/api/users/<int:user_id>` | ADMIN | handler | yes |
-| `GET` | `/favicon.ico` | public (no login) | handler |  |
+| Method | Path | Effective access | Capability | Guard location | Writes |
+| --- | --- | --- | --- | --- | --- |
+| `GET` | `/` | public (no login) |  | handler |  |
+| `GET` | `/api/audit-events` | ADMIN |  | handler |  |
+| `POST` | `/api/auth/change-password` | any authenticated |  | handler | yes |
+| `POST` | `/api/auth/login` | public (no login) |  | handler | yes |
+| `POST` | `/api/auth/logout` | any authenticated |  | handler |  |
+| `GET` | `/api/auth/me` | any authenticated |  | handler |  |
+| `POST` | `/api/batch-entry/scan` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler | yes |
+| `GET` | `/api/batch-trace-records` | any authenticated |  | handler |  |
+| `POST` | `/api/batch-trace-records/<int:record_id>/hold` | ADMIN |  | handler | yes |
+| `POST` | `/api/batch-trace-records/<int:record_id>/pass` | ADMIN |  | service: success, transition_batch_quality | yes |
+| `POST` | `/api/batch-trace/query` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
+| `POST` | `/api/bluetooth/discover` | any authenticated |  | handler |  |
+| `POST` | `/api/bluetooth/read-sn` | any authenticated |  | handler |  |
+| `GET` | `/api/bluetooth/status` | any authenticated |  | handler |  |
+| `GET` | `/api/dashboard` | ADMIN |  | handler |  |
+| `GET` | `/api/genealogy` | any authenticated scope:product+scope:supplier(NOOP) | `TRACE_VIEW` | handler |  |
+| `GET` | `/api/health` | public (no login) |  | handler |  |
+| `GET` | `/api/inbound-receipts` | any authenticated |  | handler |  |
+| `POST` | `/api/inbound-receipts` | ADMIN + WAREHOUSE |  | handler | yes |
+| `GET` | `/api/inbound-receipts/<int:receipt_id>` | any authenticated |  | handler |  |
+| `POST` | `/api/inbound-receipts/<int:receipt_id>/push` | ADMIN + OPERATIONS |  | handler | yes |
+| `GET` | `/api/inbound-receipts/<int:receipt_id>/sync-status` | ADMIN + OPERATIONS |  | handler |  |
+| `GET` | `/api/inbound-scan-records` | ADMIN + WAREHOUSE |  | handler |  |
+| `GET` | `/api/inventory-sync` | ADMIN + OPERATIONS |  | handler |  |
+| `POST` | `/api/inventory-sync` | ADMIN + OPERATIONS |  | handler | yes |
+| `GET` | `/api/lingxing/status` | ADMIN + OPERATIONS |  | handler |  |
+| `GET` | `/api/machines` | any authenticated |  | handler |  |
+| `POST` | `/api/machines` | ADMIN scope:product(NOOP) |  | handler | yes |
+| `GET` | `/api/machines/<int:machine_id>/qr` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
+| `GET` | `/api/part-label-batches` | any authenticated |  | handler |  |
+| `GET` | `/api/part-label-batches/<int:batch_id>` | any authenticated scope:supplier(NOOP) | `TRACE_VIEW` | handler |  |
+| `GET` | `/api/part-label-batches/<int:batch_id>/qrcodes.zip` | any authenticated scope:supplier(NOOP) | `TRACE_VIEW` | handler |  |
+| `GET` | `/api/part-labels` | any authenticated |  | handler |  |
+| `POST` | `/api/part-labels` | ADMIN scope:supplier(NOOP) |  | handler | yes |
+| `PUT` | `/api/part-labels/<int:label_id>` | ADMIN scope:supplier(NOOP) |  | handler | yes |
+| `GET` | `/api/part-labels/<int:label_id>/qr` | any authenticated scope:supplier(NOOP) | `TRACE_VIEW` | handler |  |
+| `GET` | `/api/part-types` | any authenticated |  | handler |  |
+| `POST` | `/api/part-types` | ADMIN |  | handler | yes |
+| `PUT` | `/api/part-types/<int:part_type_id>` | ADMIN |  | handler |  |
+| `GET` | `/api/product-attribute-columns` | any authenticated |  | handler |  |
+| `GET` | `/api/product-code-batches` | ADMIN |  | handler |  |
+| `GET` | `/api/product-code-batches/<int:generation_batch_id>` | ADMIN |  | handler |  |
+| `GET` | `/api/product-code-batches/<int:generation_batch_id>/qrcodes.zip` | ADMIN |  | handler |  |
+| `GET` | `/api/product-code-sets` | ADMIN scope:product(NOOP) |  | handler |  |
+| `GET` | `/api/product-code-sets/<int:code_set_id>/qrcodes.zip` | ADMIN |  | handler |  |
+| `GET` | `/api/product-families` | any authenticated |  | handler |  |
+| `POST` | `/api/product-families` | ADMIN |  | handler | yes |
+| `PUT` | `/api/product-families/<int:family_id>` | ADMIN |  | handler | yes |
+| `POST` | `/api/product-images` | ADMIN + OPERATIONS |  | handler |  |
+| `GET` | `/api/product-images/<path:filename>` | any authenticated |  | handler |  |
+| `GET` | `/api/product-models` | any authenticated |  | handler |  |
+| `POST` | `/api/product-models` | ADMIN |  | handler | yes |
+| `DELETE` | `/api/product-models/<int:model_id>` | ADMIN + OPERATIONS |  | handler | yes |
+| `PUT` | `/api/product-models/<int:model_id>` | ADMIN |  | handler | yes |
+| `GET` | `/api/production-batches` | any authenticated |  | handler |  |
+| `POST` | `/api/production-batches` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler | yes |
+| `GET` | `/api/production-batches/<int:batch_id>` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
+| `GET` | `/api/production-batches/<int:batch_id>/qr` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
+| `GET` | `/api/production-orders` | ADMIN + WAREHOUSE |  | handler |  |
+| `POST` | `/api/production-orders` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: business_id, generate_production_order_for_po, product_model_for_purch | yes |
+| `GET` | `/api/production-orders/<int:production_order_id>` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
+| `GET` | `/api/production-orders/<int:production_order_id>/qr` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
+| `POST` | `/api/production-orders/batch` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: business_id, generate_production_order_for_po, product_model_for_purch | yes |
+| `GET` | `/api/products` | any authenticated |  | handler |  |
+| `POST` | `/api/products` | ADMIN + OPERATIONS |  | handler | yes |
+| `PUT` | `/api/products/<int:product_model_id>` | ADMIN + OPERATIONS |  | handler | yes |
+| `POST` | `/api/products/<int:product_model_id>/code-sets` | ADMIN |  | handler | yes |
+| `GET` | `/api/products/<int:product_model_id>/qrcodes.zip` | ADMIN |  | handler |  |
+| `GET` | `/api/purchase-orders` | any authenticated |  | handler |  |
+| `POST` | `/api/purchase-orders` | ADMIN + OPERATIONS |  | handler | yes |
+| `DELETE` | `/api/purchase-orders/<int:purchase_order_id>` | ADMIN + OPERATIONS |  | handler | yes |
+| `GET` | `/api/purchase-orders/<int:purchase_order_id>` | any authenticated |  | handler |  |
+| `PUT` | `/api/purchase-orders/<int:purchase_order_id>` | ADMIN + OPERATIONS |  | handler | yes |
+| `GET` | `/api/purchase-orders/<int:purchase_order_id>/export` | ADMIN + OPERATIONS |  | handler |  |
+| `GET` | `/api/purchase-orders/<int:purchase_order_id>/factory-progress` | ADMIN + OPERATIONS |  | handler |  |
+| `POST` | `/api/purchase-orders/<int:purchase_order_id>/push` | ADMIN + OPERATIONS |  | service: ensure_lingxing_operation_ready, external_identifier, guard_is_stale,  | yes |
+| `GET` | `/api/purchase-orders/<int:purchase_order_id>/sync-status` | ADMIN + OPERATIONS |  | handler |  |
+| `GET` | `/api/purchase-orders/export` | ADMIN + OPERATIONS |  | handler |  |
+| `GET` | `/api/records` | ADMIN + WAREHOUSE scope:product(NOOP) | `RECORD_VIEW` | handler |  |
+| `DELETE` | `/api/records/<int:record_id>` | ADMIN + WAREHOUSE scope:product(NOOP) | `RECORD_DELETE` | service: editable_record, success | yes |
+| `PUT` | `/api/records/<int:record_id>` | ADMIN + WAREHOUSE scope:product+scope:supplier(NOOP) | `RECORD_EDIT` | service: editable_record, success | yes |
+| `PUT` | `/api/records/<int:record_id>/status` | ADMIN |  | handler | yes |
+| `GET` | `/api/records/export.xlsx` | any authenticated |  | handler |  |
+| `PUT` | `/api/records/status/bulk` | ADMIN |  | handler | yes |
+| `POST` | `/api/scan` | ADMIN + WAREHOUSE scope:product+scope:supplier(NOOP) | `LEGACY_SCAN` | handler | yes |
+| `POST` | `/api/scan-gun/inbound` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler | yes |
+| `POST` | `/api/scan-gun/lookup` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
+| `POST` | `/api/scan/reset` | any authenticated |  | handler | yes |
+| `GET` | `/api/scan/session` | any authenticated |  | handler |  |
+| `POST` | `/api/scan/undo` | any authenticated |  | handler | yes |
+| `GET` | `/api/settings` | ADMIN |  | handler |  |
+| `PUT` | `/api/settings` | ADMIN |  | handler | yes |
+| `GET` | `/api/supplier-inventory-batches` | ADMIN |  | handler |  |
+| `POST` | `/api/supplier-inventory-batches` | ADMIN |  | handler | yes |
+| `PUT` | `/api/supplier-inventory-batches/<int:inventory_batch_id>` | ADMIN |  | handler | yes |
+| `GET` | `/api/supplier-inventory-batches/<int:inventory_batch_id>/forward-trace` | ADMIN |  | handler |  |
+| `GET` | `/api/supplier-inventory-batches/<int:inventory_batch_id>/movements` | ADMIN |  | handler |  |
+| `GET` | `/api/suppliers` | any authenticated |  | handler |  |
+| `POST` | `/api/suppliers` | ADMIN |  | handler | yes |
+| `GET` | `/api/suppliers/<int:supplier_id>` | ADMIN |  | handler |  |
+| `PUT` | `/api/suppliers/<int:supplier_id>` | ADMIN |  | handler |  |
+| `GET` | `/api/trace-plans` | any authenticated |  | handler |  |
+| `POST` | `/api/trace-plans` | ADMIN |  | handler | yes |
+| `GET` | `/api/users` | ADMIN |  | handler |  |
+| `POST` | `/api/users` | ADMIN |  | handler | yes |
+| `PUT` | `/api/users/<int:user_id>` | ADMIN |  | handler | yes |
+| `GET` | `/favicon.ico` | public (no login) |  | handler |  |
 <!-- END GENERATED ROUTE TABLE -->
 
 ---
