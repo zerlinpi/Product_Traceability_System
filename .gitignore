@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.hypothesis/
+venv/
+.venv/
+
+# Test run artifacts (temporary databases and screenshots produced by pytest)
+tests/.pytest-tmp*/
+
+# Runtime data and backups
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/product-images/
+exports/
+
+# Local secrets and server settings (never commit real credentials)
+settings.bat
+settings.env
+
+# Local agent / editor state
+.workbuddy-ai/
+.agents/
+.idea/
+
+# OS noise
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.log

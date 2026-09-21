@@ -1,0 +1,1193 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>聚星同创仓库管理系统</title>
+  <link rel="stylesheet" href="/static/styles_v2.css?v=20260725.20">
+  <script src="/static/app_v2.js?v=20260725.20" defer></script>
+</head>
+
+<body>
+  <section class="login-screen" id="login-screen">
+    <form class="login-card" id="login-form">
+      <div class="brand-mark">聚星</div>
+      <h1>聚星同创仓库管理系统</h1>
+      <p>使用管理员、仓管或运营账号登录</p>
+      <label>账号<input name="username" autocomplete="username" required autofocus></label>
+      <label>密码<input name="password" type="password" autocomplete="current-password" required></label>
+      <div class="form-error hidden" id="login-error"></div>
+      <button class="button primary wide" type="submit">登录</button>
+    </form>
+  </section>
+
+  <div class="app-shell hidden" id="app-shell">
+    <aside class="sidebar" id="app-sidebar" aria-label="系统导航">
+      <div class="sidebar-rail">
+        <div class="sidebar-brand" aria-label="聚星同创仓库管理系统">
+          <span class="brand-symbol" aria-hidden="true">聚星</span>
+          <small>仓库管理</small>
+        </div>
+        <nav class="rail-nav" aria-label="快捷导航">
+          <button class="rail-button" type="button" data-go="dashboard" data-role="ADMIN" aria-label="数据概览"
+            title="数据概览"><img class="nav-icon" src="/static/icons/layout-dashboard.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="products" data-role="ADMIN" aria-label="产品管理"
+            title="产品管理"><img class="nav-icon" src="/static/icons/package.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="suppliers" data-role="ADMIN" aria-label="供应商"
+            title="供应商"><img class="nav-icon" src="/static/icons/building-factory-2.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="users" data-role="ADMIN" aria-label="用户管理"
+            title="用户管理"><img class="nav-icon" src="/static/icons/users.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="batch-gen" data-role="ADMIN" aria-label="批次生成"
+            title="批次生成"><img class="nav-icon" src="/static/icons/package.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="batch-entry" data-role="ADMIN" aria-label="现场批次登记"
+            title="现场批次登记"><img class="nav-icon" src="/static/icons/scan.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="batch-trace" data-role="ADMIN" aria-label="扫码查询"
+            title="扫码查询"><img class="nav-icon" src="/static/icons/route.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="batch-quality" data-role="ADMIN" aria-label="批次质量处理"
+            title="批次质量处理"><img class="nav-icon" src="/static/icons/clipboard-list.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="trace" data-role="ADMIN" aria-label="产品查询"
+            title="产品查询"><img class="nav-icon" src="/static/icons/route.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="my-records" data-role="ADMIN" aria-label="录入记录"
+            title="录入记录"><img class="nav-icon" src="/static/icons/clipboard-list.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="purchase-orders" data-role="ADMIN" aria-label="采购订单"
+            title="采购订单"><img class="nav-icon" src="/static/icons/clipboard-list.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="production-orders" data-role="ADMIN" aria-label="生产订单"
+            title="生产订单"><img class="nav-icon" src="/static/icons/building-factory-2.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="batch-entry" data-role="WAREHOUSE" aria-label="现场批次登记"
+            title="现场批次登记"><img class="nav-icon" src="/static/icons/scan.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="scan-gun" data-role="WAREHOUSE" aria-label="扫码枪入库"
+            title="扫码枪入库"><img class="nav-icon" src="/static/icons/scan.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="batch-trace" data-role="WAREHOUSE" aria-label="扫码查询"
+            title="扫码查询"><img class="nav-icon" src="/static/icons/route.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="my-records" data-role="WAREHOUSE" aria-label="产品录入记录"
+            title="产品录入记录"><img class="nav-icon" src="/static/icons/clipboard-list.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="products" data-role="OPERATIONS" aria-label="我的产品"
+            title="我的产品"><img class="nav-icon" src="/static/icons/package.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="purchase-orders" data-role="OPERATIONS" aria-label="采购订单"
+            title="采购订单"><img class="nav-icon" src="/static/icons/clipboard-list.svg" alt=""></button>
+          <button class="rail-button" type="button" data-go="inventory-sync" data-role="OPERATIONS" aria-label="库存同步"
+            title="库存同步"><img class="nav-icon" src="/static/icons/route.svg" alt=""></button>
+        </nav>
+        <div class="rail-footer">
+          <button class="rail-button" type="button" data-go="settings" data-role="ADMIN" aria-label="系统设置"
+            title="系统设置"><img class="nav-icon" src="/static/icons/settings.svg" alt=""></button>
+          <button class="rail-button" type="button" data-action="show-help" aria-label="帮助中心" title="帮助中心"><img
+              class="nav-icon" src="/static/icons/help.svg" alt=""></button>
+        </div>
+      </div>
+
+      <div class="sidebar-panel">
+        <div class="sidebar-panel-header">
+          <div class="brand-block">
+            <div><strong>聚星同创仓库管理系统</strong></div>
+          </div>
+          <button class="sidebar-close" id="sidebar-close" type="button" aria-label="关闭导航"><img class="nav-icon"
+              src="/static/icons/x.svg" alt=""></button>
+        </div>
+        <nav class="main-nav" aria-label="主菜单">
+          <div class="nav-group" data-role="ADMIN">
+            <div class="nav-group-label">运营中心</div>
+            <button class="nav-button" type="button" data-view="dashboard" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/layout-dashboard.svg" alt=""><span>数据概览</span></button>
+          </div>
+          <div class="nav-group" data-role="ADMIN">
+            <div class="nav-group-label">基础资料</div>
+            <button class="nav-button" type="button" data-view="products" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/package.svg" alt=""><span>产品管理</span></button>
+            <button class="nav-button" type="button" data-view="suppliers" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/building-factory-2.svg" alt=""><span>供应商</span></button>
+            <button class="nav-button" type="button" data-view="users" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/users.svg" alt=""><span>用户管理</span></button>
+          </div>
+          <div class="nav-group" data-role="ADMIN">
+            <div class="nav-group-label">批次管理</div>
+            <button class="nav-button" type="button" data-view="batch-gen" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/package.svg" alt=""><span>批次生成</span></button>
+            <button class="nav-button" type="button" data-view="batch-entry" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/scan.svg" alt=""><span>现场批次登记</span></button>
+            <button class="nav-button" type="button" data-view="batch-trace" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/route.svg" alt=""><span>扫码查询</span></button>
+            <button class="nav-button" type="button" data-view="batch-quality" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/clipboard-list.svg" alt=""><span>批次质量处理</span></button>
+          </div>
+          <div class="nav-group" data-role="ADMIN">
+            <div class="nav-group-label">历史记录</div>
+            <button class="nav-button" type="button" data-view="trace" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/route.svg" alt=""><span>产品查询</span></button>
+            <button class="nav-button" type="button" data-view="my-records" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/clipboard-list.svg" alt=""><span>批次登记记录</span></button>
+          </div>
+          <div class="nav-group" data-role="ADMIN">
+            <div class="nav-group-label">采购与生产</div>
+            <button class="nav-button" type="button" data-view="purchase-orders" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/clipboard-list.svg" alt=""><span>采购订单</span></button>
+            <button class="nav-button" type="button" data-view="inbound-receipts" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/package.svg" alt=""><span>供应收货</span></button>
+            <button class="nav-button" type="button" data-view="production-orders" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/building-factory-2.svg" alt=""><span>生产订单</span></button>
+            <button class="nav-button" type="button" data-view="scan-gun" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/scan.svg" alt=""><span>扫码枪入库</span></button>
+            <button class="nav-button" type="button" data-view="inventory-sync" data-role="ADMIN"><img class="nav-icon"
+                src="/static/icons/route.svg" alt=""><span>库存同步</span></button>
+          </div>
+          <div class="nav-group" data-role="WAREHOUSE">
+            <div class="nav-group-label">仓库作业</div>
+            <button class="nav-button" type="button" data-view="batch-gen" data-role="WAREHOUSE"><img class="nav-icon"
+                src="/static/icons/package.svg" alt=""><span>批次生成</span></button>
+            <button class="nav-button" type="button" data-view="batch-entry" data-role="WAREHOUSE"><img class="nav-icon"
+                src="/static/icons/scan.svg" alt=""><span>现场批次登记</span></button>
+            <button class="nav-button" type="button" data-view="inbound-receipts" data-role="WAREHOUSE"><img class="nav-icon"
+                src="/static/icons/package.svg" alt=""><span>供应收货</span></button>
+            <button class="nav-button" type="button" data-view="production-orders" data-role="WAREHOUSE"><img class="nav-icon"
+                src="/static/icons/building-factory-2.svg" alt=""><span>生产订单</span></button>
+            <button class="nav-button" type="button" data-view="scan-gun" data-role="WAREHOUSE"><img class="nav-icon"
+                src="/static/icons/scan.svg" alt=""><span>扫码枪入库</span></button>
+            <button class="nav-button" type="button" data-view="batch-trace" data-role="WAREHOUSE"><img class="nav-icon"
+                src="/static/icons/route.svg" alt=""><span>扫码查询</span></button>
+            <button class="nav-button" type="button" data-view="my-records" data-role="WAREHOUSE"><img class="nav-icon"
+                src="/static/icons/clipboard-list.svg" alt=""><span>批次登记记录</span></button>
+          </div>
+          <div class="nav-group" data-role="OPERATIONS">
+            <div class="nav-group-label">运营协同</div>
+            <button class="nav-button" type="button" data-view="products" data-role="OPERATIONS"><img class="nav-icon"
+                src="/static/icons/package.svg" alt=""><span>我的产品</span></button>
+            <button class="nav-button" type="button" data-view="purchase-orders" data-role="OPERATIONS"><img class="nav-icon"
+                src="/static/icons/clipboard-list.svg" alt=""><span>采购订单</span></button>
+            <button class="nav-button" type="button" data-view="batch-trace" data-role="OPERATIONS"><img class="nav-icon"
+                src="/static/icons/route.svg" alt=""><span>扫码查询</span></button>
+            <button class="nav-button" type="button" data-view="inventory-sync" data-role="OPERATIONS"><img class="nav-icon"
+                src="/static/icons/route.svg" alt=""><span>库存同步</span></button>
+          </div>
+        </nav>
+        <div class="sidebar-footer-nav">
+          <button class="sidebar-footer-button" type="button" data-go="settings" data-role="ADMIN"><img class="nav-icon"
+              src="/static/icons/settings.svg" alt=""><span>系统设置</span></button>
+          <button class="sidebar-footer-button" type="button" data-action="show-help"><img class="nav-icon"
+              src="/static/icons/help.svg" alt=""><span>帮助中心</span></button>
+        </div>
+        <div class="sidebar-user sr-only" aria-label="当前账户"><strong id="sidebar-user-name">未登录</strong><span
+            id="sidebar-user-role"></span></div>
+      </div>
+    </aside>
+    <button class="sidebar-overlay hidden" id="sidebar-overlay" type="button" aria-label="关闭导航" tabindex="-1"></button>
+
+    <main class="main-column">
+      <header class="topbar">
+        <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-label="打开导航" aria-controls="app-sidebar"
+          aria-expanded="false"><img class="nav-icon" src="/static/icons/menu-2.svg" alt=""></button>
+        <div class="topbar-heading">
+          <button class="topbar-home" type="button" data-go="dashboard"><img class="topbar-icon"
+              src="/static/icons/home.svg" alt=""><span>首页</span></button>
+          <span class="topbar-divider" aria-hidden="true"></span>
+          <div class="topbar-tab">
+            <h1 id="page-title">数据概览</h1><img src="/static/icons/x.svg" alt="" aria-hidden="true">
+          </div>
+          <p class="sr-only" id="page-subtitle">查看当前生产与录入状态</p>
+        </div>
+        <div class="topbar-tools"><button class="topbar-icon-button" type="button" data-action="show-notifications"
+            aria-label="通知"><img class="topbar-icon" src="/static/icons/bell.svg" alt=""></button>
+          <div class="account-menu">
+            <button class="account-button" id="account-button" type="button" aria-haspopup="menu"
+              aria-controls="account-popover" aria-expanded="false"><span class="account-avatar" id="account-avatar"
+                aria-hidden="true">用</span><span
+                class="account-copy"><strong id="topbar-user-name">账号</strong><span class="account-role-badge"
+                  id="topbar-user-role">未登录</span></span><img class="account-chevron"
+                src="/static/icons/chevron-down.svg" alt=""></button>
+            <div class="account-popover hidden" id="account-popover" role="menu" aria-label="账户设置">
+              <button type="button" id="change-password-button" role="menuitem">修改密码</button>
+              <button type="button" id="logout-button" role="menuitem">退出登录</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="content">
+        <section class="view" id="view-dashboard" data-role="ADMIN">
+          <div class="workspace-intro dashboard-quickbar">
+            <div class="metrics" id="dashboard-metrics"></div>
+            <div class="dashboard-overview-actions"><button class="button primary"
+                data-go="products">生成产品二维码</button><small id="dashboard-refreshed-at">数据更新中</small></div>
+          </div>
+          <div class="dashboard-grid">
+            <section class="panel dashboard-panel dashboard-tasks">
+              <div class="panel-heading">
+                <div>
+                  <h2>今日待办</h2>
+                  <p>集中处理质量、库存和录入任务</p>
+                </div><button class="text-button" data-go="trace">查看更多</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>类型</th>
+                      <th>事项</th>
+                      <th>来源</th>
+                      <th>数量</th>
+                      <th>紧急度</th>
+                      <th class="right">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dashboard-task-list"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="panel dashboard-panel dashboard-stock">
+              <div class="panel-heading">
+                <div>
+                  <h2>库存预警</h2>
+                  <p>按部件安全库存阈值自动识别</p>
+                </div><button class="text-button" data-go="suppliers">查看全部</button>
+              </div>
+              <div class="alert-list" id="dashboard-stock-alerts"></div>
+            </section>
+          </div>
+          <div class="dashboard-grid dashboard-grid-lower">
+            <section class="panel dashboard-panel dashboard-activity-panel">
+              <div class="panel-heading">
+                <div>
+                  <h2>最近操作</h2>
+                  <p>关键业务动作与责任人</p>
+                </div>
+              </div>
+              <div class="activity-list" id="dashboard-activity"></div><button class="activity-more" type="button"
+                data-action="show-activity-help">查看更多操作</button>
+            </section>
+            <section class="panel dashboard-panel dashboard-quality">
+              <div class="panel-heading">
+                <div>
+                  <h2>待处理批次质量</h2>
+                  <p>放行待检批次，闭环暂扣批次</p>
+                </div><button class="text-button" data-go="batch-quality">查看全部</button>
+              </div>
+              <div class="bulk-toolbar hidden"><label class="check-control"><input id="dashboard-quality-select-all"
+                    type="checkbox">全选当前列表</label><span id="dashboard-quality-selected">已选择 0 条</span><button
+                  class="button secondary small" id="dashboard-quality-bulk-button" type="button" disabled>批量处理</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>批次 / 产品</th>
+                      <th>登记台数</th>
+                      <th>状态</th>
+                      <th>操作人</th>
+                      <th class="right">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dashboard-quality-queue"></tbody>
+                </table>
+              </div>
+            </section>
+            <section class="panel dashboard-panel dashboard-codes">
+              <div class="panel-heading">
+                <div>
+                  <h2>最近生成的生产批次</h2>
+                  <p>按生成时间查看最新批次溯源码</p>
+                </div><button class="text-button" data-go="batch-gen">查看全部</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>产品</th>
+                      <th>批次码</th>
+                      <th>计划台数</th>
+                      <th>生成时间</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dashboard-code-sets"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" id="view-products" data-role="ADMIN,OPERATIONS">
+          <div id="product-list-step">
+            <div class="section-heading">
+              <div>
+                <h2>产品列表</h2>
+                <p id="product-list-hint">配置供应批次、查看可生成数量和二维码批次</p>
+              </div><button class="button primary" id="open-product-modal">添加新产品</button>
+            </div>
+            <div class="list-toolbar">
+              <div class="toolbar-search"><input id="product-search" placeholder="搜索产品名称或编码" aria-label="搜索产品"></div>
+              <select id="product-stock-filter" data-role="ADMIN" aria-label="筛选产品状态">
+                <option value="ALL">全部状态</option>
+                <option value="ACTIVE">仅看启用</option>
+                <option value="LOW">库存紧张</option>
+                <option value="OUT">无法生成</option>
+              </select><span class="result-count" id="product-result-count"></span>
+            </div>
+            <div class="product-grid" id="product-grid"></div>
+          </div>
+          <div class="hidden" id="product-detail">
+            <div class="detail-header detail-header-actions">
+              <button class="text-button" id="product-back" type="button">返回产品列表</button>
+              <div class="detail-title"><span class="eyebrow">产品详情</span>
+                <h2 id="product-detail-name"></h2>
+                <p id="product-detail-code"></p>
+              </div>
+              <div class="detail-actions"><button class="button secondary" id="edit-product"
+                  type="button">编辑产品</button><button class="button primary" id="generate-product-codes"
+                  type="button">生成二维码</button><a class="button secondary" id="download-product-codes"
+                  href="#">下载全部二维码</a><button class="button danger" id="delete-product" type="button">删除产品</button>
+              </div>
+            </div>
+            <div class="summary-strip" id="product-summary-strip"></div>
+            <div class="section-heading compact">
+              <div>
+                <h2>产品资料</h2>
+                <p>已填写的产品档案字段，可在“编辑”中维护</p>
+              </div>
+            </div>
+            <div class="panel" id="product-attribute-view"></div>
+            <div class="section-heading compact">
+              <div>
+                <h2>部件与库存</h2>
+                <p>每套产品的用量及当前绑定供应批次</p>
+              </div>
+            </div>
+            <div class="panel table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>部件</th>
+                    <th>供应商</th>
+                    <th>供应批次</th>
+                    <th>每套用量</th>
+                    <th>批次可用</th>
+                  </tr>
+                </thead>
+                <tbody id="product-component-table"></tbody>
+              </table>
+            </div>
+            <div class="section-heading compact">
+              <div>
+                <h2>二维码生成批次</h2>
+                <p>点击批次查看该次生成的全部产品主码与部件码</p>
+              </div>
+            </div>
+            <div class="panel table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>生成批次</th>
+                    <th>范围</th>
+                    <th>套数</th>
+                    <th>生成人</th>
+                    <th>生成时间</th>
+                    <th class="right">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="product-batch-table"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="hidden" id="product-batch-detail">
+            <div class="detail-header detail-header-actions">
+              <button class="text-button" id="batch-back" type="button">返回产品详情</button>
+              <div class="detail-title"><span class="eyebrow">二维码生成批次</span>
+                <h2 id="batch-detail-code"></h2>
+                <p id="batch-detail-meta"></p>
+              </div>
+              <div class="detail-actions"><a class="button primary" id="download-batch-codes" href="#">下载本批全部二维码</a>
+              </div>
+            </div>
+            <div class="pagination-bar"><span id="batch-pagination-summary"></span>
+              <div><button class="button secondary small" id="batch-prev" type="button">上一页</button><button
+                  class="button secondary small" id="batch-next" type="button">下一页</button></div>
+            </div>
+            <div class="generated-code-sets" id="batch-code-sets"></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-suppliers" data-role="ADMIN">
+          <div id="supplier-list-step">
+            <div class="section-heading">
+              <div>
+                <h2>供应商</h2>
+                <p>按供应商管理部件、批次、到货数量和可用库存</p>
+              </div><button class="button primary" id="open-supplier-modal">添加供应商</button>
+            </div>
+            <div class="list-toolbar">
+              <div class="toolbar-search"><input id="supplier-search" placeholder="搜索供应商名称、编码或联系人" aria-label="搜索供应商">
+              </div><select id="supplier-stock-filter" aria-label="筛选供应商库存">
+                <option value="ALL">全部库存</option>
+                <option value="AVAILABLE">有可用库存</option>
+                <option value="OUT">库存为零</option>
+              </select><span class="result-count" id="supplier-result-count"></span>
+            </div>
+            <div class="supplier-grid" id="supplier-grid"></div>
+          </div>
+          <div class="hidden" id="supplier-detail">
+            <div class="detail-header detail-header-actions">
+              <button class="text-button" id="supplier-back" type="button">返回供应商</button>
+              <div class="detail-title"><span class="eyebrow">供应商详情</span>
+                <h2 id="supplier-detail-name"></h2>
+                <p id="supplier-detail-code"></p>
+              </div>
+              <div class="detail-actions"><button class="button secondary" id="edit-supplier"
+                  type="button">编辑供应商</button><button class="button secondary" id="add-supplier-part"
+                  type="button">添加部件</button><button class="button primary" id="add-supplier-batch"
+                  type="button">登记到货批次</button></div>
+            </div>
+            <div class="summary-strip" id="supplier-summary-strip"></div>
+            <div class="section-heading compact">
+              <div>
+                <h2>关联产品</h2>
+                <p>查看该供应商部件被哪些产品使用，以及每套产品的用量</p>
+              </div>
+            </div>
+            <div class="panel table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>产品</th>
+                    <th>使用部件</th>
+                    <th>每套用量</th>
+                    <th>已生成套数</th>
+                    <th class="right">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="supplier-product-usage-table"></tbody>
+              </table>
+            </div>
+            <div class="section-heading compact">
+              <div>
+                <h2>供应部件</h2>
+                <p>同一供应商可维护多个部件和规格</p>
+              </div>
+            </div>
+            <div class="panel table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>部件</th>
+                    <th>编码</th>
+                    <th>规格型号</th>
+                    <th>批次数</th>
+                    <th>可用库存</th>
+                    <th class="right">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="supplier-part-table"></tbody>
+              </table>
+            </div>
+            <div class="section-heading compact">
+              <div>
+                <h2>到货批次</h2>
+                <p>修改批次数量时，系统会保留已领用数量和变动流水</p>
+              </div>
+            </div>
+            <div class="panel table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>部件 / 批次</th>
+                    <th>生产日期</th>
+                    <th>到货日期</th>
+                    <th>入库</th>
+                    <th>已领用</th>
+                    <th>可用</th>
+                    <th class="right">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="supplier-batch-table"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-users" data-role="ADMIN">
+          <div class="section-heading">
+            <div>
+              <h2>用户管理</h2>
+              <p>管理员统一设置账号角色；仅仓管账号需要分配可操作的产品范围</p>
+            </div><button class="button primary" id="open-user-modal">添加账号</button>
+          </div>
+          <div class="panel table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>姓名</th>
+                  <th>登录账号</th>
+                  <th>角色</th>
+                  <th>权限范围</th>
+                  <th>状态</th>
+                  <th class="right">操作</th>
+                </tr>
+              </thead>
+              <tbody id="user-table"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="view" id="view-trace" data-role="ADMIN">
+          <div id="trace-product-step">
+            <div class="section-heading">
+              <div>
+                <h2>选择产品</h2>
+                <p>先选择产品，再查看该产品的生产记录和产品族谱</p>
+              </div>
+            </div>
+            <div class="trace-product-grid" id="trace-product-grid"></div>
+          </div>
+          <div class="hidden" id="trace-detail">
+            <div class="detail-header"><button class="text-button" id="trace-back" type="button">返回产品列表</button>
+              <div>
+                <h2 id="trace-product-name"></h2>
+                <p>按产品查看生产批次与供应批次族谱</p>
+              </div>
+            </div>
+            <div class="panel genealogy-search">
+              <div><strong>批次族谱</strong><span>输入或扫描批次二维码内容</span></div>
+              <form id="genealogy-form"><input name="code" placeholder="扫描或输入批次二维码内容" required><button
+                  class="button secondary" type="submit">查询族谱</button></form>
+            </div>
+            <div class="section-heading compact">
+              <div>
+                <h2>生产批次</h2>
+                <p>按质量状态与生成日期定位，进入批次供应批次族谱</p>
+              </div>
+            </div>
+            <div class="panel trace-filter-panel">
+              <div class="trace-filter-grid"><label>开始日期<input id="trace-date-from" type="date"></label><label>结束日期<input
+                    id="trace-date-to" type="date"></label><label>质量状态<select id="trace-status-filter"
+                    aria-label="筛选质量状态">
+                    <option value="">全部状态</option>
+                    <option value="ASSEMBLED">待检</option>
+                    <option value="PASSED">合格</option>
+                    <option value="HOLD">暂扣</option>
+                  </select></label><label class="trace-search-field">关键词<input class="search-input"
+                    id="trace-record-search" placeholder="批次码或产品"></label><button
+                  class="button secondary trace-reset-button" id="trace-filter-reset" type="button">重置筛选</button></div>
+              <div class="filter-summary" id="trace-filter-summary">显示全部生产批次</div>
+            </div>
+            <div class="panel table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>批次码</th>
+                    <th>产品</th>
+                    <th>计划台数</th>
+                    <th>登记台数</th>
+                    <th>质量状态</th>
+                    <th>生成时间</th>
+                    <th class="right">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="trace-record-table"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-batch-gen" data-role="ADMIN,WAREHOUSE">
+          <div id="batch-gen-list-step">
+            <div class="section-heading">
+              <div>
+                <h2>批次生成</h2>
+                <p>为一个生产批次生成唯一批次二维码；一码代表整批走步机</p>
+              </div><button class="button primary" id="open-batch-generate-modal">生成生产批次</button>
+            </div>
+            <div class="list-toolbar">
+              <div class="toolbar-search"><input id="batch-gen-search" placeholder="搜索批次码或产品" aria-label="搜索生产批次"></div>
+              <span class="result-count" id="batch-gen-result-count"></span>
+            </div>
+            <div class="panel table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>批次码</th>
+                    <th>产品型号</th>
+                    <th>计划台数</th>
+                    <th>前缀</th>
+                    <th>登记状态</th>
+                    <th>生成人</th>
+                    <th>生成时间</th>
+                    <th class="right">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="batch-gen-table"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="hidden" id="batch-gen-detail">
+            <div class="detail-header detail-header-actions">
+              <button class="text-button" id="batch-gen-back" type="button">返回批次列表</button>
+              <div class="detail-title"><span class="eyebrow">生产批次详情</span>
+                <h2 id="batch-gen-detail-code"></h2>
+                <p id="batch-gen-detail-meta"></p>
+              </div>
+              <div class="detail-actions"><a class="button secondary" id="batch-gen-download-qr" href="#"
+                  target="_blank" rel="noopener">下载批次二维码</a></div>
+            </div>
+            <div class="summary-strip" id="batch-gen-summary-strip"></div>
+            <div class="batch-qr-preview" id="batch-gen-qr-preview"></div>
+            <div class="section-heading compact">
+              <div>
+                <h2>供应来源 · 供应批次消耗</h2>
+                <p>本批次消耗的供应批次、供应部件与消耗数量</p>
+              </div>
+            </div>
+            <div class="panel table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>供应批次</th>
+                    <th>供应部件</th>
+                    <th class="right">消耗数量</th>
+                  </tr>
+                </thead>
+                <tbody id="batch-gen-consumption-table"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-batch-entry" data-role="ADMIN,WAREHOUSE">
+          <div class="entry-layout">
+            <section class="panel scanner-panel">
+              <div class="scanner-heading">
+                <div><span class="step-label">批次扫码登记 · 流程第 2 步</span>
+                  <h2>扫描批次二维码</h2>
+                  <p>扫描该生产批次的二维码即可一次性登记整批走步机，无需逐台、逐部件扫码。登记后由管理员在「批次质量处理」放行，再到「扫码枪入库」入库。</p>
+                </div><button class="button text danger-text" id="batch-entry-reset" type="button">清空</button>
+              </div>
+              <form class="scan-form" id="batch-entry-form" autocomplete="off">
+                <input id="batch-entry-code" name="code" placeholder="扫描或输入批次二维码" maxlength="120" aria-label="批次二维码输入">
+                <button class="button primary" type="submit">登记整批</button>
+              </form>
+              <label class="field batch-entry-quantity">登记台数（可选修正）<input id="batch-entry-quantity" type="number" min="1"
+                  placeholder="留空则按计划台数登记"><span class="field-help">修正值须为 1 至该批次计划台数之间的整数</span></label>
+              <div class="scan-feedback neutral" id="batch-entry-feedback" role="status" aria-live="polite"
+                aria-atomic="true" tabindex="-1"><strong>尚未开始</strong><span>请扫描批次二维码</span></div>
+            </section>
+            <aside class="panel entry-product-panel">
+              <span class="step-label">最近登记</span>
+              <h2>登记结果</h2>
+              <div class="batch-entry-result" id="batch-entry-result">
+                <div class="empty-block">扫码登记成功后在此显示批次信息</div>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="view-batch-trace" data-role="ADMIN,WAREHOUSE,OPERATIONS">
+          <div class="section-heading">
+            <div>
+              <h2>扫码查询</h2>
+              <p>扫描批次二维码查看只读产品信息，不产生任何登记或数据变更</p>
+            </div>
+          </div>
+          <div class="panel genealogy-search">
+            <div><strong>批次管理</strong><span>扫描或输入批次二维码内容</span></div>
+            <form id="batch-trace-form"><input name="code" placeholder="扫描或输入批次二维码" required><button
+                class="button secondary" type="submit">查询</button></form>
+          </div>
+          <div class="hidden" id="batch-trace-result">
+            <div class="summary-strip" id="batch-trace-summary-strip"></div>
+            <div class="section-heading compact">
+              <div>
+                <h2>供应来源 · 供应批次消耗</h2>
+                <p>该生产批次消耗的供应批次清单</p>
+              </div>
+            </div>
+            <div class="panel table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>供应批次</th>
+                    <th>供应部件</th>
+                    <th class="right">消耗数量</th>
+                  </tr>
+                </thead>
+                <tbody id="batch-trace-consumption-table"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-batch-quality" data-role="ADMIN">
+          <div class="section-heading">
+            <div>
+              <h2>批次质量处理</h2>
+              <p>流程第 3 步：对整批走步机执行合格放行或暂扣；仅待检记录可处理。暂扣批次不可入库</p>
+            </div>
+          </div>
+          <div class="panel trace-filter-panel">
+            <div class="trace-filter-grid"><label>批次码<input id="batch-quality-code-filter"
+                  placeholder="按批次码筛选"></label><label>开始时间<input id="batch-quality-from"
+                  type="date"></label><label>结束时间<input id="batch-quality-to" type="date"></label><button
+                class="button secondary trace-reset-button" id="batch-quality-reset" type="button">重置筛选</button></div>
+            <div class="filter-summary" id="batch-quality-summary">显示全部批次登记记录</div>
+          </div>
+          <div class="panel table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>批次码</th>
+                  <th>产品型号</th>
+                  <th>登记台数</th>
+                  <th>质量状态</th>
+                  <th>操作人</th>
+                  <th>生成时间</th>
+                  <th class="right">操作</th>
+                </tr>
+              </thead>
+              <tbody id="batch-quality-table"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="view" id="view-my-records" data-role="ADMIN,WAREHOUSE">
+          <div class="section-heading">
+            <div>
+              <h2 id="my-record-title">批次登记记录</h2>
+              <p id="my-record-help">查看整批走步机的登记与质量状态</p>
+            </div><input class="search-input" id="my-record-search" placeholder="搜索批次码或产品" aria-label="搜索批次登记记录">
+          </div>
+          <div class="panel table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>批次码</th>
+                  <th>产品</th>
+                  <th>登记台数</th>
+                  <th>质量状态</th>
+                  <th>操作人</th>
+                  <th>生成时间</th>
+                </tr>
+              </thead>
+              <tbody id="my-record-table"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="view" id="view-purchase-orders" data-role="ADMIN,OPERATIONS">
+          <div class="section-heading">
+            <div><h2>采购订单</h2><p>创建本地采购单，查看领星同步状态与工厂进度</p></div>
+            <a class="button secondary" id="po-export-all" href="/api/purchase-orders/export">导出全部为 Excel</a>
+          </div>
+          <form class="panel compact-form" id="purchase-order-form">
+            <div class="form-grid three"><label class="field">关联产品<select name="productModelId" required></select></label>
+            </div>
+            <div class="subsection-heading">
+              <div><strong>采购单字段</strong><span>按采购单模板逐项填写；导出的 Excel 列与模板完全一致，留空的字段导出为空</span></div>
+            </div>
+            <div id="purchase-order-fields"></div>
+            <div class="modal-actions"><span class="po-form-mode" id="po-form-mode"></span><button class="button secondary hidden" type="button" id="po-cancel-edit" data-action="cancel-po-edit">取消编辑</button><button class="button primary" type="submit" id="po-submit">创建采购订单</button></div>
+          </form>
+          <div class="panel table-wrap"><table><thead><tr><th>采购单号 / 采购人</th><th>产品 / 供应商</th><th>采购量</th><th>同步状态</th><th>工厂进度</th><th>创建时间</th><th class="right">操作</th></tr></thead><tbody id="purchase-order-table"></tbody></table></div>
+          <div class="section-heading compact"><div><h2>供应收货同步</h2><p>仓管登记收货后，由运营推送领星入库</p></div></div>
+          <div class="panel table-wrap"><table><thead><tr><th>收货记录</th><th>采购单号</th><th>商品</th><th>数量</th><th>同步状态</th><th>收货时间</th><th class="right">操作</th></tr></thead><tbody id="operations-inbound-table"></tbody></table></div>
+        </section>
+
+        <section class="view" id="view-inbound-receipts" data-role="ADMIN,WAREHOUSE">
+          <div class="section-heading"><div><h2>供应收货</h2><p>针对采购订单登记供应到货，和成品扫码入库分别记账</p></div></div>
+          <form class="panel compact-form" id="inbound-receipt-form">
+            <div class="form-grid two"><label class="field">采购订单<select name="purchaseOrderId" required></select></label>
+              <label class="field">收货数量<input name="quantity" type="number" min="1" max="999999" required></label></div>
+            <div class="subsection-heading"><div><strong>订单明细</strong><span>核对采购单信息与到货数量、金额</span></div></div>
+            <div class="order-summary" id="inbound-receipt-summary"></div>
+            <div class="modal-actions"><button class="button primary" type="submit">登记收货</button></div>
+          </form>
+          <div class="panel table-wrap"><table><thead><tr><th>收货记录</th><th>采购单号</th><th>供应商 / 商品</th><th>数量</th><th>收货人</th><th>同步状态</th><th>收货时间</th></tr></thead><tbody id="inbound-receipt-table"></tbody></table></div>
+        </section>
+
+        <section class="view" id="view-production-orders" data-role="ADMIN,WAREHOUSE">
+          <div class="section-heading"><div><h2>生产订单</h2><p>流程第 1 步：勾选运营提交的采购单批量生成生产订单，每单生成唯一溯源码；也可标记为外采直接生成</p></div></div>
+          <div class="panel">
+            <div class="subsection-heading">
+              <div><strong>待生成采购单</strong><span id="pending-po-summary">勾选采购单后批量生成生产订单，每单生成唯一生产二维码</span></div>
+              <div class="table-actions">
+                <button class="button primary small" type="button" data-action="generate-production-orders">批量生成生产订单</button>
+                <button class="button secondary small" type="button" data-action="generate-production-orders-external">标记为外采并生成</button>
+              </div>
+            </div>
+            <div class="table-wrap"><table><thead><tr><th class="select-column"><input type="checkbox" id="pending-po-check-all" aria-label="全选采购单"></th><th>采购单</th><th>产品</th><th>计划数量</th><th>实际到货</th></tr></thead><tbody id="pending-purchase-order-table"></tbody></table></div>
+          </div>
+          <div class="panel table-wrap"><table><thead><tr><th>生产订单</th><th>来源采购单</th><th>产品型号</th><th>类型</th><th>数量</th><th>流程进度</th><th>生产二维码</th><th>生成时间</th><th class="right">操作</th></tr></thead><tbody id="production-order-table"></tbody></table></div>
+          <div class="panel notice-panel"><strong>后续步骤</strong><p>生成生产订单后：① 打印生产二维码随批流转；② 到「现场批次登记」扫码登记整批；③ 由管理员在「批次质量处理」放行或暂扣；④ 到「扫码枪入库」扫码登记成品库存。暂扣的批次不能入库；开启「质量放行」后需先放行才能入库。</p></div>
+        </section>
+
+        <section class="view" id="view-scan-gun" data-role="ADMIN,WAREHOUSE">
+          <div class="entry-layout">
+            <section class="panel scanner-panel"><div class="scanner-heading"><div><span class="step-label">成品入库 · 流程第 4 步</span><h2>扫描生产二维码</h2><p>扫码枪回车后自动查询生产订单，焦点会保持在扫码框。扫码后会显示该批次的登记与质量状态、已入库数量；暂扣批次不可入库。</p></div></div>
+              <form class="scan-form" id="scan-gun-lookup-form" autocomplete="off"><input id="scan-gun-code" name="code" placeholder="扫描或输入生产二维码" maxlength="120" required><button class="button primary" type="submit">查询</button></form>
+              <div class="scan-feedback neutral" id="scan-gun-feedback" role="status" aria-live="polite"><strong>等待扫码</strong><span>请扫描生产订单二维码</span></div></section>
+            <aside class="panel entry-product-panel"><span class="step-label">入库确认</span><h2>生产订单</h2><div id="scan-gun-order" class="empty-block">扫码后显示订单与产品</div>
+              <form class="hidden" id="scan-gun-inbound-form"><input name="productionOrderId" type="hidden"><label class="field">入库数量<input name="quantity" type="number" min="1" max="999999" required></label><button class="button primary wide" type="submit">确认入库</button></form></aside>
+          </div>
+          <div class="section-heading compact">
+            <div>
+              <h2>成品入库记录</h2>
+              <p>最近 50 条扫码入库明细，含入库后的成品库存</p>
+            </div>
+          </div>
+          <div class="panel table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>入库记录</th>
+                  <th>产品</th>
+                  <th>生产二维码 / 采购单</th>
+                  <th>入库数量</th>
+                  <th>入库后库存</th>
+                  <th>操作人</th>
+                  <th>入库时间</th>
+                </tr>
+              </thead>
+              <tbody id="scan-gun-record-table"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="view" id="view-inventory-sync" data-role="ADMIN,OPERATIONS">
+          <div class="section-heading"><div><h2>库存同步</h2><p>通过领星「快捷入库」接收对应收货单，将成品库存同步至领星</p></div>
+            <div class="table-actions">
+              <button class="button secondary" id="inventory-sync-selected-button" type="button">同步所选</button>
+              <button class="button primary" id="inventory-sync-button" type="button">全部同步</button>
+            </div></div>
+          <div class="panel settings-summary" id="inventory-sync-status"><div class="empty-block">尚未执行本次库存同步</div></div>
+          <div class="panel">
+            <div class="subsection-heading"><div><strong>成品库存同步状态</strong><span id="inventory-sync-summary">按产品查看当前库存与最近一次同步状态</span></div></div>
+            <div class="table-wrap"><table><thead><tr><th class="select-column"><input type="checkbox" id="inventory-sync-check-all" aria-label="全选产品"></th><th>产品</th><th>当前库存</th><th>已同步数量</th><th>同步状态</th><th>领星单号</th><th>最近同步时间</th></tr></thead><tbody id="inventory-sync-table"></tbody></table></div>
+          </div>
+          <div class="panel notice-panel"><strong>同步前检查</strong><p>请先由管理员在系统设置中保存领星凭据。同步时会先按 SKU 匹配「待收货」的领星收货单，再执行快捷入库；未找到对应收货单的产品会同步失败并提示。凭据或接口未配置时，系统会在网络请求前停止，不修改本地库存。</p></div>
+        </section>
+
+        <section class="view" id="view-settings" data-role="ADMIN">
+          <div class="section-heading"><div><h2>系统设置</h2><p>通用流程参数与领星凭据统一在此维护，敏感值仅脱敏回显</p></div></div>
+          <form class="panel settings-form" id="settings-form">
+            <div class="subsection-heading"><div><strong>通用设置</strong><span>影响历史逐台流程，不影响批次扫码</span></div></div>
+            <div class="form-grid"><label class="check-control settings-check"><input name="requireQualityRelease" type="checkbox">逐台记录需要质量放行</label></div>
+            <div class="subsection-heading"><div><strong>领星凭据</strong><span id="settings-lingxing-state">尚未配置</span></div></div>
+            <div class="form-grid two"><label class="field">appId<input name="appId" maxlength="256" autocomplete="off" placeholder="输入新值"></label><label class="field">appSecret<input name="appSecret" type="password" maxlength="256" autocomplete="new-password" placeholder="输入新值"></label></div>
+            <p class="field-help" id="settings-lingxing-masked">保存后只显示脱敏值；留空则不修改已有凭据。</p>
+            <div class="subsection-heading"><div><strong>领星写入接口</strong><span>采购下单、入库推送、库存同步的接口地址（路径或完整链接）；各推送分别按自己的接口是否配置启用</span></div></div>
+            <div class="form-grid two"><label class="field">采购订单接口<input name="endpointPurchaseOrder" maxlength="300" autocomplete="off" placeholder="默认 /erp/sc/routing/purchase/purchase/setOrders"><span class="field-help">采购单下单：把“待下单”采购单改为“待到货”，按领星采购单号提交</span></label><label class="field">入库接口<input name="endpointInboundReceipt" maxlength="300" autocomplete="off" placeholder="如 /erp/sc/...（留空停用）"></label></div>
+            <div class="form-grid two"><label class="field">库存同步接口<input name="endpointInventorySync" maxlength="300" autocomplete="off" placeholder="如 /erp/sc/...（留空停用）"></label></div>
+            <div class="modal-actions"><button class="button primary" type="submit">保存设置</button></div>
+          </form>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="product-modal">
+    <section class="modal large" role="dialog" aria-modal="true" aria-labelledby="product-modal-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="product-modal-title">添加新产品</h2>
+          <p>填写产品名称，并连续添加需要扫码的部件</p>
+        </div><button class="close-button" data-close="product-modal" type="button">关闭</button>
+      </div>
+      <form id="product-form">
+        <input name="productId" type="hidden">
+        <label class="field">产品名称<input name="name" required maxlength="100" placeholder="例如：升降桌控制器"></label>
+        <label class="field hidden" id="product-sku-field">产品编码 / SKU（可选）<input name="modelCode" maxlength="60"
+            placeholder="留空则由系统自动生成"></label>
+        <div id="product-components-section">
+          <div class="subsection-heading">
+            <div><strong>产品部件</strong><span>依次选择供应商、部件与到货批次；数量表示每套产品用量。完整成品可删除所有部件行，不配置部件。</span></div><button
+              class="button secondary small" id="add-component" type="button">添加部件</button>
+          </div>
+          <div class="component-editor" id="component-editor"></div>
+        </div>
+        <div class="subsection-heading">
+          <div><strong>产品资料</strong><span>SKU、品名、创建人与时间由系统自动填写，其余字段选填</span></div>
+        </div>
+        <div class="auto-field-row" id="product-attribute-auto"></div>
+        <div id="product-attribute-fields"></div>
+        <div class="modal-actions"><button class="button secondary" data-close="product-modal"
+            type="button">取消</button><button class="button primary" type="submit">保存产品</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="supplier-modal">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="supplier-modal-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="supplier-modal-title">添加供应商</h2>
+          <p>供应商基础信息不包含数量，部件和批次在详情页维护</p>
+        </div><button class="close-button" data-close="supplier-modal" type="button">关闭</button>
+      </div>
+      <form id="supplier-form">
+        <input name="supplierId" type="hidden">
+        <div class="form-grid two"><label class="field">供应商编码<input name="supplierCode" required maxlength="40"
+              placeholder="例如：SUP-A01"></label><label class="field">供应商名称<input name="name" required
+              maxlength="100"></label><label class="field">联系人<input name="contact" maxlength="50"></label><label
+            class="field">联系电话<input name="phone" maxlength="50"></label></div>
+        <div class="modal-actions"><button class="button secondary" data-close="supplier-modal"
+            type="button">取消</button><button class="button primary" type="submit">保存供应商</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="part-modal">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="part-modal-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="part-modal-title">添加供应部件</h2>
+          <p id="part-modal-help"></p>
+        </div><button class="close-button" data-close="part-modal" type="button">关闭</button>
+      </div>
+      <form id="part-form">
+        <input name="partTypeId" type="hidden"><input name="supplierId" type="hidden">
+        <label class="field">部件名称<input name="name" required maxlength="100"></label>
+        <div class="form-grid two"><label class="field">部件编码<input name="partCode" required maxlength="40"
+              placeholder="例如：MOTOR-A01"></label><label class="field">规格型号<input name="specification" maxlength="150"
+              placeholder="例如：24V / 80W"></label><label class="field">安全库存<input name="minimumStock" type="number"
+              min="0" max="10000000" value="0" required><span class="field-help">可用库存不高于此值时进入预警；填 0 仅提示缺货</span></label>
+        </div>
+        <div class="modal-actions"><button class="button secondary" data-close="part-modal"
+            type="button">取消</button><button class="button primary" type="submit">保存部件</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="inventory-batch-modal">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="inventory-batch-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="inventory-batch-title">登记到货批次</h2>
+          <p id="inventory-batch-help">记录供应商部件的批次、数量和日期</p>
+        </div><button class="close-button" data-close="inventory-batch-modal" type="button">关闭</button>
+      </div>
+      <form id="inventory-batch-form">
+        <input name="inventoryBatchId" type="hidden">
+        <label class="field">供应部件<select name="partTypeId" required></select></label>
+        <div class="form-grid two"><label class="field">供应批次号<input name="batchNo" required
+              maxlength="40"></label><label class="field">到货数量<input name="quantity" type="number" min="1"
+              max="10000000" required></label><label class="field">生产日期<input name="productionDate"
+              type="date"></label><label class="field">到货日期<input name="receivedDate" type="date" required></label>
+        </div>
+        <label class="field">备注<textarea name="remarks" maxlength="200" rows="3"></textarea></label>
+        <div class="modal-actions"><button class="button secondary" data-close="inventory-batch-modal"
+            type="button">取消</button><button class="button primary" type="submit">保存批次</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="production-qr-modal">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="production-qr-title">
+      <div class="modal-header">
+        <div><h3 id="production-qr-title">生产二维码</h3><p id="production-qr-sub"></p></div>
+        <button class="close-button" data-close="production-qr-modal" type="button">关闭</button>
+      </div>
+      <div class="production-qr-print" id="production-qr-print">
+        <img id="production-qr-image" alt="生产二维码">
+        <div class="production-qr-caption"><strong id="production-qr-product"></strong><code id="production-qr-code"></code></div>
+      </div>
+      <div class="modal-actions"><a class="button secondary" id="production-qr-download" download>下载二维码</a><button
+          class="button primary" id="production-qr-print-btn" type="button">打印</button></div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="code-modal">
+    <section class="modal wide-modal" role="dialog" aria-modal="true" aria-labelledby="code-modal-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="code-modal-title">生成产品二维码</h2>
+          <p id="code-product-name"></p>
+        </div><button class="close-button" data-close="code-modal" type="button">关闭</button>
+      </div>
+      <form class="code-form" id="code-form">
+        <input name="productModelId" type="hidden">
+        <label class="field">自定义前缀<input name="prefix" required maxlength="24" placeholder="例如：TABLE-A"></label>
+        <label class="field">生成套数<input name="quantity" type="number" min="1" max="1000" value="1" required><span class="field-help">单次可生成 1-1000 套，每套含主码与部件码</span></label>
+        <div class="code-rule"><span>系统自动补全</span><strong id="code-preview">前缀-今日日期-0001</strong></div>
+        <button class="button primary" type="submit">生成二维码</button>
+      </form>
+      <div class="generated-code-sets" id="generated-code-sets"></div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="user-modal">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="user-modal-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="user-modal-title">添加账号</h2>
+          <p>每个账号只属于一个角色；仅仓管按产品范围授权</p>
+        </div><button class="close-button" data-close="user-modal" type="button">关闭</button>
+      </div>
+      <form id="user-form">
+        <input name="userId" type="hidden">
+        <label class="field">姓名<input name="displayName" required maxlength="60"></label>
+        <label class="field">登录账号<input name="username" required maxlength="50"></label>
+        <label class="field">账号角色<select name="role" required>
+            <option value="WAREHOUSE">仓管</option>
+            <option value="OPERATIONS">运营</option>
+            <option value="ADMIN">管理员</option>
+          </select><span class="field-help">管理员维护系统；仓管负责扫码、收货与入库；运营负责采购与领星同步。</span></label>
+        <label class="field"><span id="user-password-label">初始密码</span><input name="password" type="password"
+            minlength="8" maxlength="128"></label>
+        <div class="modal-actions"><button class="button secondary" data-close="user-modal"
+            type="button">取消</button><button class="button primary" type="submit">保存账号</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="record-edit-modal">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="record-edit-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="record-edit-title">修改录入记录</h2>
+          <p id="record-edit-machine"></p>
+        </div><button class="close-button" data-close="record-edit-modal" type="button">关闭</button>
+      </div>
+      <div class="scan-edit-hint"><strong>扫码修改</strong><span>先点击要修改的部件输入框，再扫码；回车后自动移到下一个部件。</span></div>
+      <form id="record-edit-form"><input name="recordId" type="hidden">
+        <div class="record-part-editor" id="record-part-editor"></div>
+        <div class="modal-actions"><button class="button secondary" data-close="record-edit-modal"
+            type="button">取消</button><button class="button primary" type="submit">保存修改</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="record-delete-modal">
+    <section class="modal small-modal" role="dialog" aria-modal="true" aria-labelledby="record-delete-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="record-delete-title">删除录入记录</h2>
+          <p id="record-delete-machine"></p>
+        </div><button class="close-button" data-close="record-delete-modal" type="button">关闭</button>
+      </div>
+      <form id="record-delete-form"><input name="recordId" type="hidden"><label class="field">删除原因<textarea
+            name="reason" required maxlength="200" rows="3" placeholder="例如：扫错产品，需要重新录入"></textarea></label>
+        <div class="warning-note">删除后主码和部件码可以重新扫码，操作会写入审计记录。</div>
+        <div class="modal-actions"><button class="button secondary" data-close="record-delete-modal"
+            type="button">取消</button><button class="button danger" type="submit">确认删除</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="record-quality-modal">
+    <section class="modal small-modal" role="dialog" aria-modal="true" aria-labelledby="record-quality-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="record-quality-title">处理质量状态</h2>
+          <p id="record-quality-machine"></p>
+        </div><button class="close-button" data-close="record-quality-modal" type="button">关闭</button>
+      </div>
+      <form id="record-quality-form"><input name="recordId" type="hidden"><input name="recordIds" type="hidden"><label
+          class="field">处理结果<select name="status" required>
+            <option value="PASSED">合格放行</option>
+            <option value="HOLD">暂扣处理</option>
+            <option value="ASSEMBLED">退回待检</option>
+          </select></label><label class="field">处理说明<textarea name="reason" maxlength="200" rows="3"
+            placeholder="暂扣时必须填写原因；合格时可填写检验依据"></textarea></label>
+        <div class="quality-status-note" id="record-quality-note"></div>
+        <div class="modal-actions"><button class="button secondary" data-close="record-quality-modal"
+            type="button">取消</button><button class="button primary" type="submit">保存处理结果</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="inventory-movement-modal">
+    <section class="modal large" role="dialog" aria-modal="true" aria-labelledby="inventory-movement-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="inventory-movement-title">库存流水</h2>
+          <p id="inventory-movement-subtitle"></p>
+        </div><button class="close-button" data-close="inventory-movement-modal" type="button">关闭</button>
+      </div>
+      <div class="movement-summary" id="inventory-movement-summary"></div>
+      <div class="panel table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>业务类型</th>
+              <th>数量变化</th>
+              <th>结存</th>
+              <th>关联产品 / 批次</th>
+              <th>操作人</th>
+            </tr>
+          </thead>
+          <tbody id="inventory-movement-table"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="genealogy-modal">
+    <section class="modal large" role="dialog" aria-modal="true" aria-labelledby="genealogy-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="genealogy-title">产品族谱</h2>
+          <p id="genealogy-subtitle"></p>
+        </div><button class="close-button" data-close="genealogy-modal" type="button">关闭</button>
+      </div>
+      <div id="genealogy-content"></div>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="password-modal">
+    <section class="modal small-modal" role="dialog" aria-modal="true" aria-labelledby="password-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="password-title">修改密码</h2>
+          <p id="password-help">请输入当前密码和新密码</p>
+        </div><button class="close-button" id="password-close" type="button">关闭</button>
+      </div>
+      <form id="password-form"><label class="field">当前密码<input name="currentPassword" type="password"
+            required></label><label class="field">新密码<input name="newPassword" type="password" minlength="8"
+            maxlength="128" required></label>
+        <div class="modal-actions"><button class="button primary" type="submit">保存新密码</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="batch-generate-modal">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="batch-generate-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="batch-generate-title">生成生产批次</h2>
+          <p>选择产品与计划台数，系统将生成唯一批次二维码并按整批用量扣减库存</p>
+        </div><button class="close-button" data-close="batch-generate-modal" type="button">关闭</button>
+      </div>
+      <form id="batch-generate-form">
+        <label class="field">产品型号<select name="productModelId" required>
+            <option value="">请选择产品</option>
+          </select></label>
+        <div class="form-grid two"><label class="field">自定义前缀<input name="prefix" required maxlength="24"
+              placeholder="例如：TW04-A"></label><label class="field">计划台数<input name="quantity" type="number" min="1"
+              max="999999" value="1" required></label></div>
+        <div class="code-rule"><span>说明</span><strong>一个批次仅一个二维码，代表整批全部走步机</strong></div>
+        <div class="modal-actions"><button class="button secondary" data-close="batch-generate-modal"
+            type="button">取消</button><button class="button primary" type="submit">生成批次</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="modal-backdrop hidden" id="batch-quality-modal">
+    <section class="modal small-modal" role="dialog" aria-modal="true" aria-labelledby="batch-quality-title">
+      <div class="modal-header">
+        <div>
+          <h2 id="batch-quality-title">处理批次质量状态</h2>
+          <p id="batch-quality-machine"></p>
+        </div><button class="close-button" data-close="batch-quality-modal" type="button">关闭</button>
+      </div>
+      <form id="batch-quality-form"><input name="recordId" type="hidden"><label class="field">处理结果<select name="status"
+            required>
+            <option value="PASSED">合格放行</option>
+            <option value="HOLD">暂扣处理</option>
+          </select></label><label class="field" id="batch-quality-reason-field">暂扣原因<textarea name="reason"
+            maxlength="500" rows="3" placeholder="暂扣时必须填写原因（1 至 500 个字符）"></textarea></label>
+        <div class="quality-status-note" id="batch-quality-note"></div>
+        <div class="modal-actions"><button class="button secondary" data-close="batch-quality-modal"
+            type="button">取消</button><button class="button primary" type="submit">保存处理结果</button></div>
+      </form>
+    </section>
+  </div>
+
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
+</body>
+
+</html>

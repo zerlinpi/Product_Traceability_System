@@ -1,0 +1,18 @@
+[Unit]
+Description=Product Traceability System
+After=network.target
+
+[Service]
+Type=simple
+User=traceability
+Group=traceability
+WorkingDirectory=/opt/product-traceability
+EnvironmentFile=/opt/product-traceability/settings.env
+ExecStart=/opt/product-traceability/.venv/bin/python /opt/product-traceability/server.py
+Restart=on-failure
+RestartSec=5
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

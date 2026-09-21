@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#00c995">
+  <title>聚星同创仓库管理系统</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <svg class="svg-sprite" aria-hidden="true">
+    <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol>
+    <symbol id="i-scan" viewBox="0 0 24 24"><path d="M4 7V5a2 2 0 0 1 2-2h2M16 3h2a2 2 0 0 1 2 2v2M20 17v2a2 2 0 0 1-2 2h-2M8 21H6a2 2 0 0 1-2-2v-2M7 12h10M7 9v6M10 9v6M14 9v6M17 9v6"/></symbol>
+    <symbol id="i-machine" viewBox="0 0 24 24"><path d="M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/><path d="M7 17v2M17 17v2M8 9h8M8 13h5"/></symbol>
+    <symbol id="i-parts" viewBox="0 0 24 24"><path d="m14.7 6.3 3-3 3 3-3 3M9.3 17.7l-3 3-3-3 3-3M18 9l-9 9M6 15l9-9"/><circle cx="17.5" cy="17.5" r="3.5"/><circle cx="6.5" cy="6.5" r="3.5"/></symbol>
+    <symbol id="i-records" viewBox="0 0 24 24"><path d="M6 3h12a2 2 0 0 1 2 2v16H4V5a2 2 0 0 1 2-2Z"/><path d="M8 8h8M8 12h8M8 16h5"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4l11-11-4-4L4 16v4ZM13.5 6.5l4 4"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
+    <symbol id="i-qr" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM18 18h3v3h-3zM14 20h2M20 14v2"/></symbol>
+    <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 4v6h6M5.5 15a8 8 0 1 0 1-8.5L4 10"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-print" viewBox="0 0 24 24"><path d="M7 8V3h10v5M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2M7 14h10v7H7z"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01M11 7h6M11 17h6"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v2M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 4v2"/></symbol>
+  </svg>
+
+  <section class="auth-screen" id="login-screen">
+    <div class="auth-card">
+      <div class="auth-heading"><span class="eyebrow">JUXING TONGCHUANG WMS</span><h1>聚星同创仓库管理系统</h1><p>使用分配给你的生产账号登录。所有录入、扫码与归档操作都会记录到当前账号。</p></div>
+      <form id="login-form" class="auth-form" autocomplete="on">
+        <label>账号<input name="username" autocomplete="username" maxlength="32" required placeholder="请输入账号"></label>
+        <label>密码<input name="password" type="password" autocomplete="current-password" maxlength="128" required placeholder="请输入密码"></label>
+        <div class="auth-error hidden" id="login-error"></div>
+        <button class="btn primary auth-submit" type="submit">登录系统</button>
+      </form>
+      <p class="auth-footnote">首次部署默认管理员为 admin，首次登录后必须修改初始密码。</p>
+    </div>
+  </section>
+
+  <div class="app-shell hidden" id="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div><strong>聚星同创</strong><span>仓库管理系统</span></div>
+      </div>
+      <nav class="main-nav" aria-label="主导航">
+        <button class="nav-item active" data-view="dashboard" data-admin-only><svg><use href="#i-dashboard"/></svg><span>数据概览</span></button>
+        <button class="nav-item" data-view="machines"><svg><use href="#i-machine"/></svg><span>成品建档</span></button>
+        <button class="nav-item" data-view="catalog"><svg><use href="#i-parts"/></svg><span id="catalog-nav-label">生产资料</span></button>
+        <button class="nav-item" data-view="scanner"><svg><use href="#i-scan"/></svg><span>装配扫码台</span></button>
+        <button class="nav-item" data-view="users" data-admin-only title="录入员管理" aria-label="录入员管理"><svg><use href="#i-users"/></svg><span>录入员管理</span></button>
+        <button class="nav-item" data-view="records"><svg><use href="#i-records"/></svg><span>生产记录</span></button>
+        <button class="nav-item" data-view="audit" data-admin-only><svg><use href="#i-clock"/></svg><span>审计日志</span></button>
+      </nav>
+      <div class="sidebar-user"><div class="user-avatar" id="sidebar-user-avatar">用</div><div><small id="sidebar-user-role">当前账号</small><strong id="sidebar-user-name">未登录</strong></div></div>
+    </aside>
+
+    <div class="main-column">
+      <header class="topbar">
+        <div>
+          <h1 id="page-title">数据概览</h1>
+          <p id="page-subtitle">生产数据与归档状态</p>
+        </div>
+        <div class="topbar-actions">
+          <div class="server-state" id="server-state"><svg><use href="#i-server"/></svg><span>正在连接服务</span></div>
+          <div class="account-menu">
+            <button class="account-button" id="account-menu-button" type="button" aria-haspopup="menu" aria-expanded="false"><span id="topbar-user-name">账号</span><small>账号与安全</small></button>
+            <div class="account-popover hidden" id="account-popover" role="menu">
+              <button id="change-password-button" type="button" role="menuitem">修改登录密码</button>
+              <button id="logout-button" type="button" role="menuitem">退出登录</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="content">
+        <section class="view active" id="view-dashboard">
+          <div class="stat-grid">
+            <article class="stat-card"><div class="stat-icon mint"><svg><use href="#i-machine"/></svg></div><div><span>成品总数</span><strong id="stat-machines">0</strong><small>唯一 SN · <span id="stat-plans">0</span> 个生效 BOM</small></div></article>
+            <article class="stat-card"><div class="stat-icon blue"><svg><use href="#i-parts"/></svg></div><div><span>部件标签</span><strong id="stat-labels">0</strong><small>已生成唯一二维码</small></div></article>
+            <article class="stat-card"><div class="stat-icon violet"><svg><use href="#i-records"/></svg></div><div><span>生产归档</span><strong id="stat-records">0</strong><small>累计完整记录</small></div></article>
+            <article class="stat-card"><div class="stat-icon orange"><svg><use href="#i-clock"/></svg></div><div><span>今日完成</span><strong id="stat-today">0</strong><small><span id="stat-stations">0</span> 个工位进行中</small></div></article>
+          </div>
+          <div class="two-column dashboard-row">
+            <article class="panel quick-start">
+              <div class="panel-heading"><div><h2>标准生产流程</h2><p>先为成品建档，再按对应产品 BOM 连续扫描成品码与部件码。</p></div><button class="btn primary" data-go="machines"><svg><use href="#i-machine"/></svg>开始成品建档</button></div>
+              <div class="flow-steps" id="dashboard-flow"></div>
+              <div class="notice"><span>系统自动完成</span>扫完最后一个部件后自动生成生产记录，不需要再点击保存。</div>
+            </article>
+            <article class="panel">
+              <div class="panel-heading"><div><h2>最近归档</h2><p>最近完成的产品记录</p></div><button class="text-button" data-go="records">查看全部</button></div>
+              <div class="compact-list" id="recent-records"><div class="empty-mini">暂无归档记录</div></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" id="view-scanner">
+          <div class="scanner-livebar">
+            <div class="scanner-live-item"><span>输入状态</span><strong id="scanner-focus-state">正在连接扫码输入</strong></div>
+            <div class="scanner-live-item"><span>当前时间</span><strong id="scanner-clock">--:--:--</strong></div>
+            <label class="scan-sound-toggle"><input id="scan-sound-toggle" type="checkbox" checked><span>声音提示</span></label>
+          </div>
+          <div class="scanner-layout">
+            <article class="panel scan-panel">
+              <div class="scan-header">
+                <div><span class="eyebrow">连续扫码归档</span><div class="scan-heading-meta"><div class="workflow-badge generic" id="scan-workflow-badge">通用流程</div><strong id="scan-counter">等待成品</strong></div><h2 id="scan-instruction">请扫描成品二维码</h2><p id="scan-hint">无需点击输入框；扫描枪发送 Enter 后系统会自动提交并继续保持接收状态。</p></div>
+                <div class="scan-header-actions"><button class="btn secondary" id="undo-last-scan" disabled><svg><use href="#i-reset"/></svg>撤销上一步</button><button class="btn ghost" id="reset-session"><svg><use href="#i-close"/></svg>取消本次</button></div>
+              </div>
+              <div class="scan-progress" id="scan-progress"></div>
+              <form id="scan-form" class="scan-form" autocomplete="off">
+                <div class="scan-input-wrap"><svg><use href="#i-scan"/></svg><input id="scan-code" type="text" placeholder="等待扫描…" maxlength="120" aria-label="扫码识别码" autocapitalize="characters" spellcheck="false"><span class="enter-key">Enter</span></div>
+                <button class="btn primary scan-submit" type="submit">确认扫码</button>
+              </form>
+              <div class="scan-feedback neutral" id="scan-feedback"><svg><use href="#i-scan"/></svg><div><strong>扫描枪已就绪</strong><span>支持键盘式 USB 二维码扫描枪，已兼容主键盘 Enter 和小键盘 Enter。</span></div></div>
+              <div class="scan-completion hidden" id="scan-completion"><div><span>本台已自动归档</span><strong id="scan-completion-title">成品装配完成</strong><p id="scan-completion-detail"></p></div><button class="btn primary" id="scan-next-machine" type="button">立即扫描下一台</button></div>
+            </article>
+          </div>
+          <input id="station-name" type="hidden" value="自动装配工位">
+          <input id="operator-name" type="hidden">
+          <span id="station-id" class="hidden"></span>
+        </section>
+
+        <section class="view" id="view-machines">
+          <div class="simple-workflow-banner"><div class="simple-step-number">1</div><div><strong>成品建档：选择产品型号并录入唯一 SN</strong><p>支持蓝牙读取、扫码枪或手工录入；保存后打印成品二维码，再进入装配扫码。</p></div><button class="btn primary" data-go="scanner">成品码已贴好，去装配扫码</button></div>
+          <div class="section-toolbar"><div><h2>已建档成品</h2><p>管理员先维护产品分类、型号和识别方式，录入员按型号建立成品档案。</p></div><div class="toolbar-actions"><button class="btn primary" id="open-bluetooth-capture"><svg><use href="#i-scan"/></svg>蓝牙读取 SN</button><button class="btn secondary" data-open="machine-form"><svg><use href="#i-plus"/></svg>新增成品</button></div></div>
+          <article class="panel form-panel hidden" id="machine-form-panel">
+            <form id="machine-form" class="inline-form">
+              <label>产品型号<select name="productModelId" id="machine-product-model" required><option value="">请选择产品型号</option></select></label>
+              <label>成品 SN<input name="sn" required maxlength="64" placeholder="扫描或输入唯一序列号"></label>
+              <label>生产日期<input name="productionDate" maxlength="8" inputmode="numeric" placeholder="YYYYMMDD"></label>
+              <div class="form-actions"><button type="button" class="btn ghost" data-close="machine-form">取消</button><button type="submit" class="btn primary">保存并生成二维码</button></div>
+            </form>
+          </article>
+          <article class="panel table-panel">
+            <div class="table-toolbar"><div class="search-box"><svg><use href="#i-search"/></svg><input id="machine-search" placeholder="搜索 SN、产品型号或识别码"></div><span class="table-count" id="machine-count">0 件成品</span></div>
+            <div class="table-scroll"><table><thead><tr><th>成品 SN</th><th>产品 / 型号</th><th>生产日期</th><th>识别码</th><th>记录状态</th><th>创建时间</th><th class="right">操作</th></tr></thead><tbody id="machine-table"></tbody></table></div>
+          </article>
+        </section>
+
+        <section class="view" id="view-catalog">
+          <div class="section-toolbar"><div><h2>生产资料</h2><p>录入员生成部件编码和填写单码数据；管理员维护产品、BOM、供应商、物料与账号。</p></div></div>
+          <div class="catalog-tabs" id="catalog-tabs" role="tablist"><button class="catalog-tab active" data-catalog="labels">部件录入</button><button class="catalog-tab" data-catalog="products" data-admin-only>产品与型号</button><button class="catalog-tab" data-catalog="bom" data-admin-only>产品 BOM</button><button class="catalog-tab" data-catalog="parts" data-admin-only>部件物料</button><button class="catalog-tab" data-catalog="suppliers" data-admin-only>供应商</button><button class="catalog-tab" data-catalog="settings" data-admin-only>流程设置</button></div>
+
+          <div class="catalog-page" id="catalog-products" data-admin-only>
+            <div class="two-column admin-master-grid">
+              <article class="panel form-panel always-open"><div class="panel-heading"><div><h2 id="product-family-form-title">新增产品分类</h2><p>分类代表产品线，例如走步机、床架；型号隶属于分类。</p></div></div><form id="product-family-form" class="stack-form"><input name="familyId" type="hidden"><label>分类编码<input name="productCode" required maxlength="32" placeholder="例如：BED_FRAME"></label><label>分类名称<input name="name" required maxlength="80" placeholder="例如：电动床架"></label><label>说明<textarea name="description" maxlength="300" rows="3" placeholder="可选"></textarea></label><div class="form-actions"><button class="btn ghost hidden" id="cancel-product-family-edit" type="button">取消编辑</button><button class="btn primary" id="product-family-submit" type="submit">保存产品分类</button></div></form></article>
+              <article class="panel form-panel always-open">
+                <div class="panel-heading"><div><h2 id="product-model-form-title">新增自定义产品型号</h2><p>型号编码、名称和 SN 规则均可自定义；只有选择蓝牙读取时才显示蓝牙配置。</p></div></div>
+                <form id="product-model-form" class="grid-form">
+                  <input name="modelId" type="hidden">
+                  <label>产品分类<select name="productFamilyId" id="model-product-family" required><option value="">请选择产品分类</option></select></label>
+                  <label>型号编码<input name="modelCode" required maxlength="32" placeholder="例如：BF-01"></label>
+                  <label>型号名称<input name="name" required maxlength="100" placeholder="例如：BF-01 电动床架"></label>
+                  <label>SN 前缀<input name="serialPrefix" maxlength="40" placeholder="可选，例如：BF-01"></label>
+                  <label>SN 录入方式<select name="identitySource" id="model-identity-source"><option value="SCANNER">扫码枪</option><option value="MANUAL">手工录入</option><option value="BLUETOOTH">蓝牙读取</option></select></label>
+                  <div class="bluetooth-fields hidden full-span" id="model-bluetooth-fields">
+                    <label>设备名称前缀<input name="bluetoothNamePrefix" maxlength="40" placeholder="例如：BF-01"></label>
+                    <label>服务 UUID<input name="bluetoothServiceUuid" maxlength="36" placeholder="例如：0000fff0-..."></label>
+                    <label>通知 UUID<input name="bluetoothNotifyUuid" maxlength="36" placeholder="必填"></label>
+                  </div>
+                  <div class="form-actions align-end full-span"><button class="btn ghost hidden" id="cancel-product-model-edit" type="button">取消编辑</button><button class="btn primary" id="product-model-submit" type="submit">保存产品型号</button></div>
+                </form>
+              </article>
+            </div>
+            <article class="panel table-panel"><div class="table-toolbar"><h3>产品分类</h3><span class="table-count" id="product-family-count">0 个分类</span></div><div class="table-scroll"><table><thead><tr><th>分类编码</th><th>分类名称</th><th>说明</th><th>型号数量</th><th class="right">状态 / 操作</th></tr></thead><tbody id="product-family-table"></tbody></table></div></article>
+            <article class="panel table-panel"><div class="table-toolbar"><h3>产品型号列表</h3><span class="table-count" id="product-model-count">0 个型号</span></div><div class="table-scroll"><table><thead><tr><th>产品分类</th><th>型号</th><th>SN 来源</th><th>蓝牙配置</th><th>成品 / BOM</th><th class="right">状态 / 操作</th></tr></thead><tbody id="product-model-table"></tbody></table></div></article>
+          </div>
+
+          <div class="catalog-page active" id="catalog-labels">
+            <article class="panel form-panel always-open"><div class="panel-heading"><div><h2>批量生成部件二维码</h2><p>每一个实物部件生成一个不可重复的标签。</p></div></div>
+              <form id="label-form" class="grid-form">
+                <label>供应商<select id="label-supplier-filter" required><option value="">请选择已授权供应商</option></select></label>
+                <label>部件类型<select name="partTypeId" id="label-part-type" required disabled><option value="">请先选择供应商</option></select></label>
+                <label>生成数量<input name="quantity" type="number" min="1" max="100" value="1" required></label>
+                <button class="btn primary align-end" type="submit"><svg><use href="#i-qr"/></svg>生成二维码</button>
+                <details class="advanced-fields full-span">
+                  <summary>补充批次信息（可选）</summary>
+                  <div class="advanced-fields-grid">
+                    <label>生产批次<input name="lotNo" maxlength="80" placeholder="可选"></label>
+                    <label>供应商批次<input name="supplierBatchNo" maxlength="80" placeholder="可选"></label>
+                    <label>部件生产日期<input name="productionDate" maxlength="20" placeholder="例如：2026-07-16"></label>
+                  </div>
+                </details>
+                <div class="identity-note full-span"><span>当前录入员</span><strong id="label-current-operator">当前登录账号</strong></div>
+              </form>
+            </article>
+            <article class="panel table-panel"><div class="table-toolbar"><div><h3>编码批次</h3><span class="cell-secondary">点击批次可查看本批全部单码，并整批下载二维码</span></div><span class="table-count" id="batch-count">0 个批次</span></div><div class="table-scroll"><table><thead><tr><th>编码批次</th><th>部件分类 / 供应商</th><th>生产信息</th><th>数量</th><th>单码录入</th><th>生成操作员 / 时间</th><th class="right">操作</th></tr></thead><tbody id="batch-table"></tbody></table></div></article>
+            <article class="panel table-panel"><div class="table-toolbar"><div class="search-box"><svg><use href="#i-search"/></svg><input id="label-search" placeholder="搜索标签、供应商单件序列号、部件、供应商或批次"></div><span class="table-count" id="label-count">0 个标签</span></div><div class="table-scroll"><table><thead><tr><th>标签识别码 / 编码批次</th><th>部件</th><th>供应商</th><th>单码数据</th><th>使用状态</th><th class="right">操作</th></tr></thead><tbody id="label-table"></tbody></table></div></article>
+          </div>
+
+          <div class="catalog-page" id="catalog-parts" data-admin-only>
+            <article class="panel form-panel always-open"><div class="panel-heading"><div><h2>新增供应商物料</h2><p>同一种部件请填写相同的分类编码，例如不同供应商的电机都归入 MOTOR。</p></div></div><form id="part-type-form" class="grid-form"><label>部件分类编码<input name="categoryCode" required maxlength="32" list="part-category-codes" placeholder="例如：MOTOR"><datalist id="part-category-codes"></datalist></label><label>部件分类名称<input name="categoryName" required maxlength="100" list="part-category-names" placeholder="例如：驱动电机"><datalist id="part-category-names"></datalist></label><label>供应商物料编码<input name="partCode" required maxlength="32" placeholder="例如：MOTOR-SUP01"></label><label>供应商物料名称<input name="name" required maxlength="100" placeholder="例如：A 厂驱动电机"></label><label>规格型号<input name="specification" maxlength="150" placeholder="可选"></label><label>供应商<select name="supplierId" id="part-supplier" required><option value="">请选择供应商</option></select></label><button class="btn primary align-end" type="submit">保存供应商物料</button></form></article>
+            <article class="panel table-panel"><div class="table-toolbar"><h3>部件分类与供应商物料</h3><span class="table-count" id="part-type-count">0 种</span></div><div class="table-scroll"><table><thead><tr><th>统一部件分类</th><th>供应商物料</th><th>规格型号</th><th>供应商</th><th>录入时间</th></tr></thead><tbody id="part-type-table"></tbody></table></div></article>
+          </div>
+
+          <div class="catalog-page" id="catalog-bom" data-admin-only>
+            <article class="panel form-panel always-open">
+              <div class="panel-heading"><div><h2>创建并启用 BOM 版本</h2><p>新版本启用后，旧版本自动归档；已建档成品继续使用原版本快照。</p></div></div>
+              <form id="trace-plan-form" class="bom-form">
+                <div class="grid-form bom-master-fields">
+                  <label>产品型号<select name="productModelId" id="bom-product-model" required><option value="">请选择产品型号</option></select></label>
+                  <label>BOM 名称<input name="name" required maxlength="100" placeholder="例如：TW-04 标准装配 BOM"></label>
+                  <label>版本<input name="version" required maxlength="24" placeholder="例如：V1.0"></label>
+                </div>
+                <div class="bom-builder">
+                  <div class="bom-builder-title"><div><h3>部件槽位</h3><p>按实际装配扫码顺序添加。相同部件需要多个时可填写数量。</p></div><span id="bom-slot-count">0 / 20 个实物部件</span></div>
+                  <div class="bom-slot-editor">
+                    <label>槽位名称<input id="bom-slot-name" maxlength="80" placeholder="例如：驱动电机"></label>
+                    <label>要求的部件分类<select id="bom-slot-part"><option value="">请选择部件分类</option></select></label>
+                    <label>数量<input id="bom-slot-quantity" type="number" min="1" max="20" value="1"></label>
+                    <button type="button" class="btn secondary" id="add-bom-slot"><svg><use href="#i-plus"/></svg>添加槽位</button>
+                  </div>
+                  <div class="bom-draft-slots" id="bom-draft-slots"><div class="empty-mini">尚未添加部件槽位</div></div>
+                </div>
+                <div class="bom-form-actions"><button type="button" class="btn ghost" id="clear-bom-draft">清空草稿</button><button type="submit" class="btn primary">保存并启用此版本</button></div>
+              </form>
+            </article>
+            <article class="panel table-panel"><div class="table-toolbar"><div><h3>版本化 BOM 列表</h3><span class="cell-secondary">绿色为当前型号生效版本</span></div><span class="table-count" id="trace-plan-count">0 个版本</span></div><div class="table-scroll"><table><thead><tr><th>产品型号</th><th>BOM / 版本</th><th>部件槽位</th><th>状态</th><th>使用成品</th><th>启用时间</th></tr></thead><tbody id="trace-plan-table"></tbody></table></div></article>
+          </div>
+
+          <div class="catalog-page" id="catalog-suppliers" data-admin-only>
+            <article class="panel form-panel always-open"><div class="panel-heading"><div><h2>新增供应商</h2><p>供应商编码需保持唯一。</p></div></div><form id="supplier-form" class="grid-form"><label>供应商编码<input name="supplierCode" required maxlength="32" placeholder="例如：SUP-001"></label><label>供应商名称<input name="name" required maxlength="100" placeholder="公司名称"></label><label>联系人<input name="contact" maxlength="50" placeholder="可选"></label><label>联系电话<input name="phone" maxlength="50" placeholder="可选"></label><button class="btn primary align-end" type="submit">保存供应商</button></form></article>
+            <article class="panel table-panel"><div class="table-toolbar"><h3>供应商列表</h3><span class="table-count" id="supplier-count">0 家</span></div><div class="table-scroll"><table><thead><tr><th>供应商编码</th><th>名称</th><th>联系人</th><th>联系电话</th><th>录入时间</th></tr></thead><tbody id="supplier-table"></tbody></table></div></article>
+          </div>
+
+          <div class="catalog-page" id="catalog-users" data-admin-only>
+            <article class="panel form-panel always-open">
+              <div class="panel-heading"><div><h2 id="user-form-title">新增录入员</h2><p>管理员设置登录账号、实名和数据范围。新账号首次登录必须修改初始密码。</p></div></div>
+              <form id="user-form" class="grid-form user-management-form">
+                <input name="userId" type="hidden">
+                <label>登录账号<input name="username" required maxlength="32" placeholder="例如：line.a01"></label>
+                <label>录入员姓名 / 工号<input name="displayName" required maxlength="60" placeholder="由管理员设置，用于全部审计记录"></label>
+                <label><span id="user-password-label">初始密码</span><input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
+                <label>账号角色<select name="role" id="user-role"><option value="OPERATOR">录入员</option><option value="ADMIN">管理员</option></select></label>
+                <fieldset class="user-scope-panel full-span" id="user-scope-fields">
+                  <legend>录入员数据权限</legend>
+                  <p>录入员只能选择下列产品型号和供应商进行建档、部件录入和装配扫码；不能新增或修改产品、供应商、BOM、账号及流程设置。</p>
+                  <div class="user-scope-grid">
+                    <div class="scope-group"><div class="scope-heading"><strong>允许的产品型号</strong><button type="button" class="scope-select-all" data-scope-all="product">全选</button></div><div class="scope-options" id="user-product-scope"></div></div>
+                    <div class="scope-group"><div class="scope-heading"><strong>允许的供应商</strong><button type="button" class="scope-select-all" data-scope-all="supplier">全选</button></div><div class="scope-options" id="user-supplier-scope"></div></div>
+                  </div>
+                </fieldset>
+                <div class="form-actions align-end"><button class="btn ghost hidden" id="cancel-user-edit" type="button">取消编辑</button><button class="btn primary" id="user-submit" type="submit">创建账号</button></div>
+              </form>
+            </article>
+            <article class="panel table-panel"><div class="table-toolbar"><div><h3>管理员与录入员</h3><span class="cell-secondary">管理员拥有全部权限；录入员按分配范围执行</span></div><span class="table-count" id="user-count">0 个账号</span></div><div class="table-scroll"><table><thead><tr><th>账号</th><th>实名 / 工号</th><th>角色</th><th>授权范围</th><th>状态</th><th>最近登录</th><th>创建时间</th><th class="right">操作</th></tr></thead><tbody id="user-table"></tbody></table></div></article>
+          </div>
+
+          <div class="catalog-page" id="catalog-settings" data-admin-only>
+            <article class="panel settings-card"><div class="settings-icon"><svg><use href="#i-scan"/></svg></div><div class="settings-copy"><h2>装配流程兼容设置</h2><p>未配置 BOM 的历史型号使用固定的兼容部件数量（2 个）。质量门禁默认关闭以兼容旧流程；启用后，仅“检验状态为合格”的部件可以进入装配扫码。</p></div><form id="settings-form" class="settings-form"><label class="settings-toggle"><input name="requireQualityRelease" id="require-quality-release" type="checkbox"><span>要求部件检验合格后装配</span></label><button class="btn primary" type="submit">保存设置</button></form></article>
+          </div>
+        </section>
+
+        <section class="view" id="view-records">
+          <div class="section-toolbar"><div><h2>生产记录</h2><p>按成品、部件、供应商、批次、工位或操作员查询。</p></div><a class="btn primary" id="export-records" href="/api/records/export.xlsx"><svg><use href="#i-download"/></svg>导出 Excel</a></div>
+          <article class="panel table-panel"><div class="table-toolbar"><div class="search-box wide"><svg><use href="#i-search"/></svg><input id="record-search" placeholder="搜索成品 SN、部件码、供应商、批次、BOM、工位或操作员"></div><span class="table-count" id="record-count">0 条记录</span></div><div class="table-scroll"><table class="records-table"><thead><tr><th>记录单号</th><th>成品</th><th>BOM / 状态</th><th>部件明细</th><th>工位 / 操作员</th><th>归档时间</th><th class="right">操作</th></tr></thead><tbody id="record-table"></tbody></table></div></article>
+        </section>
+
+        <section class="view" id="view-audit" data-admin-only>
+          <div class="audit-summary-grid">
+            <article class="audit-summary-card"><span>全部事件</span><strong id="audit-total">0</strong><small>系统累计安全与生产操作</small></article>
+            <article class="audit-summary-card"><span>今日事件</span><strong id="audit-today">0</strong><small>按服务器本地日期统计</small></article>
+            <article class="audit-summary-card"><span>涉及人员</span><strong id="audit-operators">0</strong><small>有实名记录的操作人员</small></article>
+          </div>
+          <article class="panel table-panel audit-panel">
+            <div class="table-toolbar audit-toolbar">
+              <div class="audit-filters">
+                <div class="search-box wide"><svg><use href="#i-search"/></svg><input id="audit-search" placeholder="搜索账号、对象编号、工位或原因"></div>
+                <select id="audit-event-type" aria-label="按事件类型筛选"><option value="">全部事件类型</option></select>
+              </div>
+              <span class="table-count" id="audit-count">0 条日志</span>
+            </div>
+            <div class="table-scroll"><table class="audit-table"><thead><tr><th>发生时间</th><th>事件</th><th>操作人员</th><th>对象</th><th>工位</th><th>详情</th></tr></thead><tbody id="audit-table"></tbody></table></div>
+          </article>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="label-modal" role="dialog" aria-modal="true" aria-labelledby="label-modal-title">
+    <div class="modal label-modal-card">
+      <button class="icon-button modal-close" aria-label="关闭"><svg><use href="#i-close"/></svg></button>
+      <div class="print-label" id="print-label">
+        <div class="label-brand">聚星同创仓库</div>
+        <h2 id="label-modal-title">唯一识别标签</h2>
+        <p id="label-modal-subtitle"></p>
+        <img id="label-qr-image" alt="二维码">
+        <code id="label-code"></code>
+        <div class="label-meta" id="label-meta"></div>
+      </div>
+      <div class="modal-actions"><button class="btn secondary modal-close">关闭</button><button class="btn primary" id="print-button"><svg><use href="#i-print"/></svg>打印标签</button></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="part-data-modal" role="dialog" aria-modal="true" aria-labelledby="part-data-title">
+    <div class="modal part-data-modal-card">
+      <button class="icon-button part-data-close" aria-label="关闭"><svg><use href="#i-close"/></svg></button>
+      <div class="data-entry-heading"><span class="eyebrow">单码数据</span><h2 id="part-data-title">录入部件数据</h2><p>供应商和编码批次由标签自动关联，首次保存时记录录入时间。</p></div>
+      <form id="part-data-form" class="data-entry-form">
+        <input type="hidden" name="labelId">
+        <div class="data-entry-code"><span>唯一部件编码</span><code id="part-data-code"></code></div>
+        <div class="grid-form">
+          <label>供应商单件序列号<input name="sourceSerialNo" maxlength="100" placeholder="供应商提供的序列号，可选"></label>
+          <label>部件生产日期<input name="productionDate" maxlength="20" placeholder="例如：2026-07-16"></label>
+          <label>检验状态<select name="inspectionStatus"><option value="PENDING">待检</option><option value="PASS">合格</option><option value="FAIL">不合格</option></select></label>
+          <div class="identity-note"><span>录入账号</span><strong id="part-data-current-operator">当前登录账号</strong></div>
+        </div>
+        <label class="data-entry-remarks">备注<textarea name="remarks" maxlength="500" rows="3" placeholder="可记录检验结果、物料特征或异常说明"></textarea></label>
+        <div class="modal-actions"><button type="button" class="btn secondary part-data-close">取消</button><button type="submit" class="btn primary">保存单码数据</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="batch-detail-modal" role="dialog" aria-modal="true" aria-labelledby="batch-detail-title">
+    <div class="modal batch-detail-modal-card">
+      <button class="icon-button batch-detail-close" aria-label="关闭"><svg><use href="#i-close"/></svg></button>
+      <div class="batch-detail-heading"><span class="eyebrow">编码批次详情</span><h2 id="batch-detail-title">正在加载批次…</h2><p id="batch-detail-subtitle"></p></div>
+      <div class="batch-detail-summary" id="batch-detail-summary"></div>
+      <div class="batch-detail-toolbar"><strong>本批单码</strong><a class="btn primary" id="batch-download" href="#"><svg><use href="#i-download"/></svg>下载本批全部二维码</a></div>
+      <div class="table-scroll batch-detail-table"><table><thead><tr><th>序号</th><th>唯一识别码</th><th>供应商单件序列号</th><th>录入状态</th><th class="right">操作</th></tr></thead><tbody id="batch-detail-labels"></tbody></table></div>
+      <div class="modal-actions"><button class="btn secondary batch-detail-close">关闭</button></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="bluetooth-modal" role="dialog" aria-modal="true" aria-labelledby="bluetooth-modal-title">
+    <div class="modal bluetooth-modal-card">
+      <button class="icon-button bluetooth-close" aria-label="关闭"><svg><use href="#i-close"/></svg></button>
+      <div class="bluetooth-title"><div class="settings-icon"><svg><use href="#i-scan"/></svg></div><div><h2 id="bluetooth-modal-title">蓝牙读取成品 SN</h2><p id="bluetooth-modal-description">按已启用产品型号的蓝牙名称前缀筛选设备，并使用该型号配置的通知 UUID 读取 SN。</p></div></div>
+      <div class="bluetooth-status" id="bluetooth-status">准备扫描附近设备。请确保目标设备已开机，且没有被手机连接。</div>
+      <div class="bluetooth-list" id="bluetooth-device-list"></div>
+      <div class="modal-actions"><button class="btn secondary bluetooth-close">关闭</button><button class="btn primary" id="discover-bluetooth"><svg><use href="#i-search"/></svg>扫描已配置设备</button></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="genealogy-modal" role="dialog" aria-modal="true" aria-labelledby="genealogy-title">
+    <div class="modal genealogy-modal-card">
+      <button class="icon-button genealogy-close" aria-label="关闭"><svg><use href="#i-close"/></svg></button>
+      <div class="genealogy-heading"><span class="eyebrow">产品族谱</span><h2 id="genealogy-title">族谱详情</h2><p id="genealogy-subtitle"></p></div>
+      <div class="genealogy-summary" id="genealogy-summary"></div>
+      <div class="genealogy-grid"><section><h3>投入部件</h3><div id="genealogy-parts"></div></section><section><h3>关键追踪事件</h3><div class="event-timeline" id="genealogy-events"></div></section></div>
+      <div class="modal-actions"><button class="btn secondary genealogy-close">关闭</button></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="password-modal" role="dialog" aria-modal="true" aria-labelledby="password-modal-title">
+    <div class="modal password-modal-card">
+      <button class="icon-button password-close hidden" id="password-close" type="button" aria-label="关闭"><svg><use href="#i-close"/></svg></button>
+      <div class="data-entry-heading"><span class="eyebrow">ACCOUNT SECURITY</span><h2 id="password-modal-title">首次登录，请修改密码</h2><p id="password-modal-description">修改完成后才能进入生产系统。新密码至少 8 个字符。</p></div>
+      <form id="password-form" class="data-entry-form">
+        <label>当前密码<input name="currentPassword" type="password" autocomplete="current-password" required maxlength="128"></label>
+        <label>新密码<input name="newPassword" type="password" autocomplete="new-password" required minlength="8" maxlength="128"></label>
+        <label>确认新密码<input name="confirmPassword" type="password" autocomplete="new-password" required minlength="8" maxlength="128"></label>
+        <div class="auth-error hidden" id="password-error"></div>
+        <div class="modal-actions"><button type="submit" class="btn primary" id="password-submit">修改密码并进入系统</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="scan-undo-modal" role="dialog" aria-modal="true" aria-labelledby="scan-undo-title">
+    <div class="modal scan-undo-modal-card">
+      <button class="icon-button scan-undo-close" type="button" aria-label="关闭"><svg><use href="#i-close"/></svg></button>
+      <div class="data-entry-heading"><span class="eyebrow">CONTROLLED UNDO</span><h2 id="scan-undo-title">撤销最后一个部件</h2><p>只允许撤销当前未归档流程的最后一个部件。系统会释放该部件并保留完整审计记录。</p></div>
+      <form id="scan-undo-form" class="data-entry-form">
+        <label>撤销原因<textarea name="reason" required maxlength="160" rows="3" placeholder="例如：误扫了相邻工位的部件标签"></textarea></label>
+        <div class="auth-error hidden" id="scan-undo-error"></div>
+        <div class="modal-actions"><button type="button" class="btn secondary scan-undo-close">取消</button><button type="submit" class="btn primary">确认撤销</button></div>
+      </form>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toast-container" aria-live="polite"></div>
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</body>
+</html>
