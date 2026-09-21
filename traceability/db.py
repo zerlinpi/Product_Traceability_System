@@ -1281,11 +1281,69 @@ def initialize_database(app) -> None:
                 connection.execute("ROLLBACK")
                 raise
 
+        # v20 adds the idempotency ledger used by field-facing write endpoints
+        # (scan-gun inbound, batch registration, batch generation). A scan gun or
+        # a flaky LAN can deliver the same submission twice; without a key the
+        # second request credits finished-goods stock again. The row is inserted
+        # *before* the business logic runs, so the insert itself is the mutual
+        # exclusion. Purely additive: one new table, no existing structure
+        # touched, so foreign-key enforcement is left on.
+        current_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if current_version < 20:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS idempotency_keys (
+                        idempotency_key TEXT NOT NULL,
+                        scope TEXT NOT NULL,
+                        request_fingerprint TEXT NOT NULL,
+                        state TEXT NOT NULL DEFAULT 'in_progress'
+                            CHECK (state IN ('in_progress', 'completed')),
+                        status_code INTEGER,
+                        response_json TEXT,
+                        actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                        started_at TEXT NOT NULL,
+                        completed_at TEXT,
+                        PRIMARY KEY (idempotency_key, scope)
+                    )
+                    """
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_idempotency_state_started "
+                    "ON idempotency_keys(state, started_at)"
+                )
+                connection.execute("PRAGMA user_version = 20")
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
         _clear_abandoned_guards(connection)
+        # A claim can only be held by a live request, so anything still
+        # 'in_progress' here belongs to a process that died mid-request.
+        _clear_abandoned_idempotency_claims(connection)
     finally:
         connection.close()
 
     app.teardown_appcontext(close_db)
+
+
+def _clear_abandoned_idempotency_claims(connection: sqlite3.Connection) -> None:
+    """Release idempotency claims stranded by a crash.
+
+    The deterministic counterpart to the timeout-based handling in the route
+    layer, matching ``_clear_abandoned_guards``. Without it a process killed
+    between claiming a key and completing it would answer 409 to every retry
+    forever, requiring manual DB surgery.
+    """
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        connection.execute("DELETE FROM idempotency_keys WHERE state = 'in_progress'")
+        connection.execute("COMMIT")
+    except Exception:
+        connection.execute("ROLLBACK")
+        raise
 
 
 def _clear_abandoned_guards(connection: sqlite3.Connection) -> None:

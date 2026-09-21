@@ -133,7 +133,7 @@ require_supplier_access()      # user_id is None → 直接 return，不检查
 | 无任何角色守卫（仅需登录） | **27** | |
 | **仅靠空操作范围守卫** | **0** | ✅ 已修复（原为 12） |
 | 显式能力守卫 | **12** | 由 `require_capability` 保护 |
-| 守卫位于 service 层 | **6** | |
+| 守卫位于 service 层 | **10** | 含 4 个由幂等包装拆出的生产者函数 |
 | 写操作路由 | **42** | |
 
 ---
@@ -232,7 +232,7 @@ if operator_id is not None and row["completed_by_user_id"] != operator_id:
 即：管理员界面上「给仓管分配产品」的操作会持久化并回显，但**不产生任何权限效果**。
 
 ### D5 — 鉴权分散在 handler 与 service 两层，无统一规律
-**6 个路由**的守卫在被调用的 service 函数内，而非路由函数体内：
+**10 个路由**的守卫在被调用的函数内，而非路由函数体内：
 
 | Method | Path | 守卫所在函数 |
 | --- | --- | --- |
@@ -240,14 +240,35 @@ if operator_id is not None and row["completed_by_user_id"] != operator_id:
 | `PUT` | `/api/records/<int:record_id>` | `editable_record` |
 | `DELETE` | `/api/records/<int:record_id>` | `editable_record` |
 | `POST` | `/api/purchase-orders/<int:purchase_order_id>/push` | `push_purchase_order_record` |
-| `POST` | `/api/production-orders` | `generate_production_order_for_po` |
-| `POST` | `/api/production-orders/batch` | `generate_production_order_for_po` |
+| `POST` | `/api/production-orders` | `_impl_create_production_order` |
+| `POST` | `/api/production-orders/batch` | `_impl_create_production_orders_batch` |
+| `POST` | `/api/production-batches` | `_impl_create_production_batch` |
+| `POST` | `/api/batch-entry/scan` | `_impl_batch_entry_scan` |
+| `POST` | `/api/purchase-orders` | `_impl_create_purchase_order` |
+| `POST` | `/api/scan-gun/inbound` | `_impl_scan_gun_inbound` |
 
 **典型对照**：`/pass` 与 `/hold` 是同一状态机的两个方向，`/hold` 把 `require_admin()` 写在
 handler 里，`/pass` 写在 service 里。只看 handler 会误判 `/pass` 无守卫
 （本次审计第一版提取器就产生了这个假阳性）。
 
-> 这是本次审计最重要的方法论结论：**任何权限审计都必须跟踪调用图，只看路由函数体会得出错误结论。**
+后 6 个（`_impl_*`）是**幂等包装**引入的新形态：
+
+```python
+@app.post("/api/scan-gun/inbound")
+def scan_gun_inbound():
+    return run_idempotent("scan-gun.inbound", _impl_scan_gun_inbound)
+
+def _impl_scan_gun_inbound():
+    require_admin_or_warehouse()   # ← 守卫在这里
+    ...
+```
+
+生产者函数是**作为参数传递**的，不是被调用，因此朴素的调用图跟踪会认为守卫消失了
+（本次又踩了一次）。`tools/extract_routes.py` 为此加了 `IDEMPOTENT_WRAPPER_RE` 显式解析——
+**没有**改用「裸标识符匹配」，那会过度报告权限，是更危险的方向。
+
+> 这是本次审计最重要的方法论结论：**任何权限审计都必须跟踪调用图，
+> 且必须覆盖「函数被传递」这种非调用形态。**
 
 ### D6 — 文档与实现冲突：仓管的可见产品范围
 
@@ -288,7 +309,7 @@ handler 里，`/pass` 写在 service 里。只看 handler 会误判 `/pass` 无�
 | `POST` | `/api/auth/login` | public (no login) |  | handler | yes |
 | `POST` | `/api/auth/logout` | any authenticated |  | handler |  |
 | `GET` | `/api/auth/me` | any authenticated |  | handler |  |
-| `POST` | `/api/batch-entry/scan` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler | yes |
+| `POST` | `/api/batch-entry/scan` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_batch_entry_scan, run_idempotent, success | yes |
 | `GET` | `/api/batch-trace-records` | any authenticated |  | handler |  |
 | `POST` | `/api/batch-trace-records/<int:record_id>/hold` | ADMIN |  | handler | yes |
 | `POST` | `/api/batch-trace-records/<int:record_id>/pass` | ADMIN |  | service: success, transition_batch_quality | yes |
@@ -337,21 +358,21 @@ handler 里，`/pass` 写在 service 里。只看 handler 会误判 `/pass` 无�
 | `DELETE` | `/api/product-models/<int:model_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `PUT` | `/api/product-models/<int:model_id>` | ADMIN |  | handler | yes |
 | `GET` | `/api/production-batches` | any authenticated |  | handler |  |
-| `POST` | `/api/production-batches` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler | yes |
+| `POST` | `/api/production-batches` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_batch, run_idempotent, success | yes |
 | `GET` | `/api/production-batches/<int:batch_id>` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-batches/<int:batch_id>/qr` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-orders` | ADMIN + WAREHOUSE |  | handler |  |
-| `POST` | `/api/production-orders` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: business_id, generate_production_order_for_po, product_model_for_purch | yes |
+| `POST` | `/api/production-orders` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_order, business_id, generate_production_order_ | yes |
 | `GET` | `/api/production-orders/<int:production_order_id>` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
 | `GET` | `/api/production-orders/<int:production_order_id>/qr` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
-| `POST` | `/api/production-orders/batch` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: business_id, generate_production_order_for_po, product_model_for_purch | yes |
+| `POST` | `/api/production-orders/batch` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_orders_batch, business_id, generate_production | yes |
 | `GET` | `/api/products` | any authenticated |  | handler |  |
 | `POST` | `/api/products` | ADMIN + OPERATIONS |  | handler | yes |
 | `PUT` | `/api/products/<int:product_model_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `POST` | `/api/products/<int:product_model_id>/code-sets` | ADMIN |  | handler | yes |
 | `GET` | `/api/products/<int:product_model_id>/qrcodes.zip` | ADMIN |  | handler |  |
 | `GET` | `/api/purchase-orders` | any authenticated |  | handler |  |
-| `POST` | `/api/purchase-orders` | ADMIN + OPERATIONS |  | handler | yes |
+| `POST` | `/api/purchase-orders` | ADMIN + OPERATIONS |  | service: _impl_create_purchase_order, business_id, business_quantity, clean_pur | yes |
 | `DELETE` | `/api/purchase-orders/<int:purchase_order_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `GET` | `/api/purchase-orders/<int:purchase_order_id>` | any authenticated |  | handler |  |
 | `PUT` | `/api/purchase-orders/<int:purchase_order_id>` | ADMIN + OPERATIONS |  | handler | yes |
@@ -367,7 +388,7 @@ handler 里，`/pass` 写在 service 里。只看 handler 会误判 `/pass` 无�
 | `GET` | `/api/records/export.xlsx` | any authenticated |  | handler |  |
 | `PUT` | `/api/records/status/bulk` | ADMIN |  | handler | yes |
 | `POST` | `/api/scan` | ADMIN + WAREHOUSE scope:product+scope:supplier(NOOP) | `LEGACY_SCAN` | handler | yes |
-| `POST` | `/api/scan-gun/inbound` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler | yes |
+| `POST` | `/api/scan-gun/inbound` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_scan_gun_inbound, business_id, business_quantity, production_ord | yes |
 | `POST` | `/api/scan-gun/lookup` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
 | `POST` | `/api/scan/reset` | any authenticated |  | handler | yes |
 | `GET` | `/api/scan/session` | any authenticated |  | handler |  |

@@ -52,6 +52,24 @@ DEF_RE = re.compile(r"^    def (?P<name>\w+)\(")
 CALL_RE = re.compile(r"\b(?P<name>[a-z_][a-z0-9_]*)\s*\(")
 CAPABILITY_CALL_RE = re.compile(r"require_capability\(\s*Capability\.(?P<name>\w+)")
 
+# Idempotent write endpoints are split into a thin handler plus a producer:
+#
+#     @app.post("/api/scan-gun/inbound")
+#     def scan_gun_inbound():
+#         return run_idempotent("scan-gun.inbound", _impl_scan_gun_inbound)
+#
+#     def _impl_scan_gun_inbound():
+#         require_admin_or_warehouse()
+#         ...
+#
+# The producer is *passed as an argument*, not called, so plain call-graph
+# following misses it and every guard would appear to have vanished. Resolve it
+# explicitly rather than switching to bare-identifier matching, which would
+# over-report guards (the dangerous direction).
+IDEMPOTENT_WRAPPER_RE = re.compile(
+    r'run_idempotent\(\s*"[^"]*"\s*,\s*(?P<impl>[A-Za-z_]\w*)\s*\)'
+)
+
 # Guards live in traceability/auth.py; these are the leaves of the call graph.
 # Each maps to the set of roles that pass it.
 GUARD_ROLE: dict[str, frozenset[str]] = {
@@ -118,6 +136,10 @@ def _resolve_guards(
             if token not in guards:
                 guards.append(token)
         queue.extend(_calls(body, known) - visited)
+        for match in IDEMPOTENT_WRAPPER_RE.finditer(body):
+            impl = match.group("impl")
+            if impl in known and impl not in visited:
+                queue.append(impl)
     return guards, visited
 
 

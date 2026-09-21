@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from io import BytesIO, StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from flask import Flask, Response, jsonify, render_template, request, send_file
@@ -54,6 +54,20 @@ from traceability.auth import (
     require_warehouse,
 )
 from traceability.capabilities import Capability
+from traceability.idempotency import (
+    CLAIMED,
+    CONFLICT,
+    IDEMPOTENCY_BODY_FIELD,
+    IDEMPOTENCY_HEADER,
+    IN_PROGRESS,
+    REPLAY,
+    IdempotencyError,
+    claim,
+    complete,
+    fingerprint,
+    normalize_key,
+    release,
+)
 from traceability.lingxing import (
     DEFAULT_API_BASE_URL,
     DEFAULT_INVENTORY_RECEIVE_PATH,
@@ -1720,6 +1734,83 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     def success(data: Any = None, status: int = 200):
         return jsonify({"ok": True, "data": data}), status
+
+    def run_idempotent(scope: str, producer: Callable[[], Any]) -> Any:
+        """Run ``producer`` at most once per (Idempotency-Key, scope).
+
+        Field-facing writes are wrapped in this so a scan gun or a flaky LAN
+        cannot credit finished-goods stock twice when the client retries after a
+        timeout. The key is **claimed before** the business logic runs, so two
+        concurrent duplicates serialise on the SQLite write lock instead of both
+        executing. See ``traceability/idempotency.py``.
+
+        Requests without a key behave exactly as before — the mechanism is
+        opt-in, so existing clients keep working.
+        """
+        payload = request.get_json(silent=True) or {}
+        raw_key = request.headers.get(IDEMPOTENCY_HEADER) or payload.get(IDEMPOTENCY_BODY_FIELD)
+        if not raw_key:
+            return producer()
+        try:
+            key = normalize_key(raw_key)
+        except IdempotencyError as error:
+            raise ApiError(str(error)) from error
+
+        database = get_db()
+        request_fingerprint = fingerprint(payload)
+        outcome, existing = claim(
+            database,
+            key=key,
+            scope=scope,
+            request_fingerprint=request_fingerprint,
+            actor_user_id=current_actor_id(),
+            started_at=app.config["NOW_PROVIDER"](),
+        )
+        if outcome == CONFLICT:
+            raise ApiError("幂等键已被另一份不同的请求使用，请重新提交", 409)
+        if outcome == IN_PROGRESS:
+            raise ApiError("同一请求正在处理中，请勿重复提交", 409)
+        if outcome == REPLAY:
+            # The original request already committed; hand back its response
+            # verbatim so the client sees a deterministic result.
+            return jsonify(json.loads(existing["response_json"])), int(existing["status_code"])
+        assert outcome == CLAIMED
+
+        try:
+            result = producer()
+        except Exception:
+            # The business transaction rolled back, so nothing happened. Free the
+            # key so the client's retry is not stranded.
+            release(database, key=key, scope=scope)
+            raise
+
+        # Handlers here return either a Response or the ``(Response, status)``
+        # tuple that ``success()`` produces; normalise before inspecting it.
+        if isinstance(result, tuple):
+            response, status_code = result[0], int(result[1])
+        else:
+            response, status_code = result, int(result.status_code)
+        body = response.get_json(silent=True)
+        if 200 <= status_code < 300 and body is not None:
+            try:
+                complete(
+                    database,
+                    key=key,
+                    scope=scope,
+                    status_code=status_code,
+                    body=body,
+                    completed_at=app.config["NOW_PROVIDER"](),
+                )
+            except Exception:
+                # The business operation already committed. Failing to record the
+                # response must not turn a success into an error; drop the claim
+                # so a retry re-runs rather than replaying nothing.
+                release(database, key=key, scope=scope)
+        else:
+            # The business rejected the request, so nothing happened. Let the
+            # client retry with the same key.
+            release(database, key=key, scope=scope)
+        return result
 
     @app.get("/")
     def index():
@@ -3451,6 +3542,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.post("/api/production-batches")
     def create_production_batch():
+        return run_idempotent("production-batches.create", _impl_create_production_batch)
+
+    def _impl_create_production_batch():
         # ADMIN or WAREHOUSE may generate a production batch; the "admin only"
         # authorization has been widened (Requirements 9.1, 12.4). Unauthorized
         # roles are rejected before any batch is created or stock is deducted
@@ -3721,6 +3815,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.post("/api/batch-entry/scan")
     def batch_entry_scan():
+        return run_idempotent("batch-entry.scan", _impl_batch_entry_scan)
+
+    def _impl_batch_entry_scan():
         # The field / warehouse operator scans a batch QR to register the whole
         # batch in one shot (Requirement 2.1). The former "operator" field-entry
         # ability is owned by WAREHOUSE (ADMIN is allowed for support); other
@@ -6992,6 +7089,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.post("/api/purchase-orders")
     def create_purchase_order():
+        return run_idempotent("purchase-orders.create", _impl_create_purchase_order)
+
+    def _impl_create_purchase_order():
         # Operations fill the purchase-order template directly. Supplier / 商品
         # links are optional; the product link is kept ("和产品挂钩") and every
         # order records its creator (采购人).
@@ -7868,6 +7968,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.post("/api/production-orders")
     def create_production_order():
+        return run_idempotent("production-orders.create", _impl_create_production_order)
+
+    def _impl_create_production_order():
         require_admin_or_warehouse()
         payload = request.get_json(silent=True) or {}
         purchase_order_id = business_id(payload.get("purchaseOrderId"), "采购订单")
@@ -7890,6 +7993,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.post("/api/production-orders/batch")
     def create_production_orders_batch():
+        return run_idempotent("production-orders.batch", _impl_create_production_orders_batch)
+
+    def _impl_create_production_orders_batch():
         # Warehouse batch-generates production orders (each minting its trace/QR
         # code) from the purchase orders operations submitted. Each PO is handled
         # in its own transaction so one failure does not abort the rest; orders
@@ -8099,6 +8205,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     @app.post("/api/scan-gun/inbound")
     def scan_gun_inbound():
+        return run_idempotent("scan-gun.inbound", _impl_scan_gun_inbound)
+
+    def _impl_scan_gun_inbound():
         require_admin_or_warehouse()
         payload = request.get_json(silent=True) or {}
         production_order_id = business_id(payload.get("productionOrderId"), "生产订单")

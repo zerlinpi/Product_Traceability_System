@@ -231,13 +231,14 @@ ASSEMBLED --hold--> HOLD       （需 ADMIN，原因 1-500 字符）
 
 | 编号 | 缺口 | 状态 | 所在文档 |
 | --- | --- | --- | --- |
+| 第五 | 现场写操作无请求级幂等键 | ✅ 已实现（6 个高风险端点） | `API_CONTRACT.md` §6 |
 | 第六 | 范围守卫失效、鉴权分散两层 | ✅ 已收敛（能力表）；D5 待处理 | `PERMISSION_MATRIX.md` |
 | 第六 | 记录归属权规则未实现（仓管可互相校对） | ⚠️ 待业务确认 | 本文档 §10 |
-| 第五 | 无请求级幂等键 | ⚠️ 待处理 | `API_CONTRACT.md` §6 |
 | 第八 | 领星 endpoint 未限制 host，存在 SSRF 风险 | ⚠️ 待处理 | `API_CONTRACT.md` §7 |
 | 第十六 | 列表接口基本不分页；导出全内存构建 | ⚠️ 待处理 | `API_CONTRACT.md` §4/§5 |
 | 第十七 | `audit_events` 非 append-only，无 hash chain | ⚠️ 待处理 | 本文档 §9 |
 | 第十八/三十九 | `manage.py` 缺少 verify/restore/integrity 命令 | ⚠️ 待处理 | 本文档 §11 |
 | 第三十五 | 错误信封无 `code`，前端解析中文 | ⚠️ 待处理 | `API_CONTRACT.md` §1 |
 | 第三十六 | 时间戳未统一为 timezone-aware UTC | ⚠️ 待处理 | `DATA_MODEL.md` §6 |
-| 第三 | 迁移矩阵测试不完整（缺 12→19 … 18→19） | ⚠️ 待处理 | `DATA_MODEL.md` §1 |
+| 第三 | 迁移矩阵测试不完整（缺 12→20 … 18→20） | ⚠️ 待处理 | `DATA_MODEL.md` §1 |
+| 第五 | `POST /api/scan` 等其余写接口未接入幂等键 | ⚠️ 待处理 | `API_CONTRACT.md` §6.3 |

@@ -175,21 +175,56 @@ function debounce(fn, delay = 240) {
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), delay); };
 }
 
-async function api(path, options = {}) {
-  const headers = { Accept: "application/json", ...(options.headers || {}) };
-  if (options.body !== undefined && !(options.body instanceof FormData)) {
-    headers["Content-Type"] = "application/json";
-    options.body = JSON.stringify(options.body);
+// Idempotency keys for field-facing writes.
+//
+// A scan gun or a flaky LAN can deliver the same submission twice. The server
+// replays the stored response when it sees the same key again, so the key has to
+// stay stable across retries of one submission — and be dropped once the server
+// has given a definitive answer, so the *next* genuine submission is not
+// mistaken for a duplicate.
+const pendingIdempotencyKeys = new Map();
+
+function newIdempotencyKey() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `pts-${crypto.randomUUID()}`;
   }
-  if (options.method && options.method !== "GET" && state.csrfToken) {
+  return `pts-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function idempotencyKeyFor(scope) {
+  if (!pendingIdempotencyKeys.has(scope)) {
+    pendingIdempotencyKeys.set(scope, newIdempotencyKey());
+  }
+  return pendingIdempotencyKeys.get(scope);
+}
+
+function clearIdempotencyKey(scope) {
+  pendingIdempotencyKeys.delete(scope);
+}
+
+async function api(path, options = {}) {
+  // ``idempotent`` names the server-side scope; it is a client-only option and
+  // must not reach fetch().
+  const idempotentScope = options.idempotent;
+  const { idempotent: _ignored, ...fetchOptions } = options;
+  const headers = { Accept: "application/json", ...(fetchOptions.headers || {}) };
+  if (fetchOptions.body !== undefined && !(fetchOptions.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+    fetchOptions.body = JSON.stringify(fetchOptions.body);
+  }
+  if (fetchOptions.method && fetchOptions.method !== "GET" && state.csrfToken) {
     headers["X-CSRF-Token"] = state.csrfToken;
   }
+  if (idempotentScope) headers["Idempotency-Key"] = idempotencyKeyFor(idempotentScope);
   let response;
   try {
-    response = await fetch(path, { credentials: "same-origin", ...options, headers });
+    response = await fetch(path, { credentials: "same-origin", ...fetchOptions, headers });
   } catch (networkError) {
     // A dropped connection / offline / DNS failure surfaces as a raw browser
     // error ("Failed to fetch"); replace it with a clear, actionable message.
+    // The key is deliberately NOT cleared: the operator's retry should replay
+    // rather than duplicate, because the request may well have reached the
+    // server before the connection broke.
     const error = new Error("网络连接失败，请检查网络后重试");
     error.status = 0;
     throw error;
@@ -197,12 +232,18 @@ async function api(path, options = {}) {
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("application/json") ? await response.json() : null;
   if (!response.ok || payload?.ok === false) {
+    // 5xx means the server may have committed; keep the key so a retry replays.
+    // 4xx is a definitive rejection with nothing written, so start fresh.
+    if (idempotentScope && response.status >= 400 && response.status < 500) {
+      clearIdempotencyKey(idempotentScope);
+    }
     const error = new Error(payload?.message || `请求失败（${response.status}）`);
     error.status = response.status;
     if (response.status === 401) showLogin();
     if (response.status === 428 && !state.passwordRequired) showPasswordModal(true);
     throw error;
   }
+  if (idempotentScope) clearIdempotencyKey(idempotentScope);
   return payload?.data;
 }
 
@@ -1633,6 +1674,7 @@ async function submitBatchGenerate(event) {
   try {
     await api("/api/production-batches", {
       method: "POST",
+      idempotent: "production-batches.create",
       body: {
         productModelId: Number(form.elements.productModelId.value),
         prefix: form.elements.prefix.value,
@@ -1698,7 +1740,7 @@ async function submitBatchEntry(event) {
   state.batchEntryBusy = true;
   submit.disabled = true;
   try {
-    const result = await api("/api/batch-entry/scan", { method: "POST", body });
+    const result = await api("/api/batch-entry/scan", { method: "POST", idempotent: "batch-entry.scan", body });
     input.value = "";
     $("#batch-entry-quantity").value = "";
     renderBatchEntryResult(result);
@@ -2191,7 +2233,7 @@ async function submitPurchaseOrder(event) {
     if (editingId) {
       await api(`/api/purchase-orders/${editingId}`, { method: "PUT", body: { productModelId, fields } });
     } else {
-      await api("/api/purchase-orders", { method: "POST", body: { productModelId, fields } });
+      await api("/api/purchase-orders", { method: "POST", idempotent: "purchase-orders.create", body: { productModelId, fields } });
     }
     // Rebuild the field inputs so they reset to their editable defaults.
     state.editingPurchaseOrderId = null;
@@ -2354,6 +2396,7 @@ async function generateProductionOrders(external) {
   }
   const result = await api("/api/production-orders/batch", {
     method: "POST",
+    idempotent: "production-orders.batch",
     body: { purchaseOrderIds: ids, external: Boolean(external) },
   });
   await loadProductionOrders();
@@ -2467,7 +2510,7 @@ async function submitScanGunInbound(event) {
   event.preventDefault();
   const form = event.currentTarget;
   try {
-    const result = await api("/api/scan-gun/inbound", { method: "POST", body: { productionOrderId: Number(form.elements.productionOrderId.value), quantity: Number(form.elements.quantity.value) } });
+    const result = await api("/api/scan-gun/inbound", { method: "POST", idempotent: "scan-gun.inbound", body: { productionOrderId: Number(form.elements.productionOrderId.value), quantity: Number(form.elements.quantity.value) } });
     toast("成品入库成功", `最新库存 ${result.onHand}`);
     loadScanGun();
   } catch (error) { showError(error, "成品入库失败"); }

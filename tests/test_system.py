@@ -1302,7 +1302,7 @@ def test_v1_database_is_migrated_without_dropping_existing_rows(tmp_path):
             assert migrated_machine["sn"] == "TW-04-LEGACY000000000000000001"
             assert migrated_machine["model_code"] == "TW-04"
             assert migrated_machine["bluetooth_notify_uuid"] == "0000fff1-0000-1000-8000-00805f9b34fb"
-            assert migrated.execute("PRAGMA user_version").fetchone()[0] == 19
+            assert migrated.execute("PRAGMA user_version").fetchone()[0] == 20
             # v16: the extended product profile column exists, and a production
             # batch may omit its trace plan (component-less finished goods).
             product_model_columns = {

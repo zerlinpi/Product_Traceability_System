@@ -146,15 +146,30 @@ PARAM_FREE_PUBLIC = {
 PUBLIC_PATHS = {"/api/health", "/api/auth/login"}
 GATE_REJECTION_MESSAGE = "登录状态已失效，请重新登录"
 
-# Routes whose role guard lives inside the service helper they delegate to,
-# not in the handler body.  DEVIATION D5.
+# Routes whose role guard lives inside the helper they delegate to, not in the
+# handler body.  DEVIATION D5, plus the idempotent-write split where the handler
+# is a thin `run_idempotent(...)` shim and the guard sits in the producer.
 EXPECTED_SERVICE_GUARDED_ROUTES = {
+    ("POST", "/api/batch-entry/scan"),
     ("POST", "/api/batch-trace-records/<int:record_id>/pass"),
-    ("PUT", "/api/records/<int:record_id>"),
-    ("DELETE", "/api/records/<int:record_id>"),
-    ("POST", "/api/purchase-orders/<int:purchase_order_id>/push"),
+    ("POST", "/api/production-batches"),
     ("POST", "/api/production-orders"),
     ("POST", "/api/production-orders/batch"),
+    ("POST", "/api/purchase-orders"),
+    ("POST", "/api/purchase-orders/<int:purchase_order_id>/push"),
+    ("DELETE", "/api/records/<int:record_id>"),
+    ("PUT", "/api/records/<int:record_id>"),
+    ("POST", "/api/scan-gun/inbound"),
+}
+
+# Write endpoints wrapped in the idempotency layer, mapped to their scope.
+IDEMPOTENT_WRITE_ROUTES = {
+    ("POST", "/api/scan-gun/inbound"): "scan-gun.inbound",
+    ("POST", "/api/batch-entry/scan"): "batch-entry.scan",
+    ("POST", "/api/production-batches"): "production-batches.create",
+    ("POST", "/api/purchase-orders"): "purchase-orders.create",
+    ("POST", "/api/production-orders"): "production-orders.create",
+    ("POST", "/api/production-orders/batch"): "production-orders.batch",
 }
 
 # Routes that used to be protected only by a no-op scope guard and now carry an

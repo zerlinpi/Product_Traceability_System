@@ -1,12 +1,12 @@
 # 数据模型（真实基线）
 
-> 基线：`user_version = 19`，共 **33 张业务表**。
-> 本文档的表清单、主键与外键数量由 `data/traceability.db` 实际 schema 提取，
-> 非手写规范。迁移实现见 `traceability/db.py`。
+> 基线：`user_version = 20`，共 **34 张业务表**。
+> 本文档的表清单、主键与外键数量由实际 schema 提取，非手写规范。
+> 迁移实现见 `traceability/db.py`。
 
 ---
 
-## 1. 迁移链（v11 → v19）
+## 1. 迁移链（v11 → v20）
 
 迁移**只增不删**：不删除或重写历史二维码、标签、溯源记录。
 每个版本在一个 `BEGIN IMMEDIATE` 事务内完成，含 `PRAGMA user_version` 的写入，因此失败即整体回滚。
@@ -22,28 +22,34 @@
 | **v17** | `production_orders.is_external` 列 + `product_stock_sync` 表 | 纯增量 |
 | **v18** | 6 个热点外键/过滤列补索引 | 纯增量（索引） |
 | **v19** | `purchase_orders.push_started_at`、`inbound_receipts.push_started_at` | 纯增量（加列） |
+| **v20** | `idempotency_keys` 表 + 状态/起始时间索引 | 纯增量（新表） |
 
 ### ⚠️ 当前部署状态
 
-`data/traceability.db` 实际为 **`user_version = 18`**，落后代码一个版本。
-下次启动将自动执行 v19。v19 仅新增两个可空 `TEXT` 列，不影响既有数据。
+`data/traceability.db` 实际为 **`user_version = 18`**，落后代码两个版本。
+下次启动将依次执行 v19、v20。两者均为纯增量（加列 + 新表），不影响既有数据。
 
 ### 启动时附加动作
 
-`_clear_abandoned_guards()` 在**每次启动**运行（不属于任何迁移版本），
-强制释放残留的推送/同步进行中标记：
+以下两个清理函数在**每次启动**运行（不属于任何迁移版本）：
+
+`_clear_abandoned_guards()` — 强制释放残留的推送/同步进行中标记：
 
 - `purchase_orders.push_in_progress` → 0
 - `inbound_receipts.push_in_progress` → 0
 - `app_settings['inventory_sync.in_progress']` → '0'
 
-理由：数据库初始化期间不可能有请求在途，因此仍被置位的标记必然来自崩溃的进程。
-若不清除，该单据会永远返回 409「正在进行中」，需人工改库。
+`_clear_abandoned_idempotency_claims()` — 删除 `state = 'in_progress'` 的幂等键行。
 
-### v19 解决的问题
+两者理由相同：数据库初始化期间不可能有请求在途，因此仍被置位的标记必然来自崩溃的进程。
+若不清除，对应单据/键会永远返回 409「正在进行中」，需人工改库。
 
-v19 之前，进程在推送中途死亡会把 `push_in_progress` 永久留在 1。
-v19 记录守卫获取时间（`push_started_at`），使下一次尝试能识别被遗弃的守卫并接管。
+### v19 / v20 解决的问题
+
+- **v19**：进程在推送中途死亡会把 `push_in_progress` 永久留在 1。
+  v19 记录守卫获取时间（`push_started_at`），使下一次尝试能识别被遗弃的守卫并接管。
+- **v20**：现场设备（扫码枪）或抖动局域网会把同一次提交投递两次。
+  幂等键让重复请求重放已存响应而非重复执行——否则**成品库存会被重复累加**。
 
 ---
 
@@ -118,6 +124,28 @@ v19 记录守卫获取时间（`push_started_at`），使下一次尝试能识�
 | --- | --- | --- | --- |
 | `user_product_model_permissions` | 2 | `user_id, product_model_id` | 2 |
 | `user_supplier_permissions` | 2 | `user_id, supplier_id` | 2 |
+
+### 2.8 幂等键（v20 新增）
+
+| 表 | 列 | 主键 | 外键 |
+| --- | --- | --- | --- |
+| `idempotency_keys` | 9 | `idempotency_key, scope` | 1 |
+
+| 列 | 说明 |
+| --- | --- |
+| `idempotency_key` | 客户端提供，**大小写敏感**，8–128 可打印字符 |
+| `scope` | 端点标识，同键不同端点互不影响 |
+| `request_fingerprint` | 归一化 body 的 SHA-256；同键不同 body → 409 |
+| `state` | `in_progress` / `completed`（CHECK 约束） |
+| `status_code` / `response_json` | 重放用的已存响应 |
+| `actor_user_id` | 发起人，`ON DELETE SET NULL` |
+| `started_at` / `completed_at` | 占位与完成时间；保留期 7 天 |
+
+> **主键是 `(idempotency_key, scope)` 组合**，不是单独的 key——
+> 否则同一个键无法在不同端点上使用。有测试守住这一点。
+
+> 设计要点：键行在业务逻辑**之前**插入，**插入本身就是互斥锁**。
+> 见 `docs/API_CONTRACT.md` §6.1 与 `traceability/idempotency.py`。
 
 > **⚠️ 偏差 D4（详见 `PERMISSION_MATRIX.md`）**：这两张表仍被
 > `_replace_user_scope()` 写入，并通过 `user_dict()` 以

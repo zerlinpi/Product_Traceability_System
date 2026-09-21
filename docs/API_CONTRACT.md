@@ -124,11 +124,50 @@ GET /api/production-batches/<int:batch_id>/qr?page=N
 
 ---
 
-## 6. 幂等性现状
+## 6. 幂等性
 
-**没有通用的 `idempotency_key` / request fingerprint 机制。**
+### 6.1 请求级幂等键（现场写操作）
 
-现有的等价手段是**领域唯一键 + 状态守卫**：
+现场设备（扫码枪）或抖动局域网会把同一次提交投递两次：客户端超时、操作员重试，
+而服务端已经提交。**UI 层的防双击无法阻止这一点**——重复请求是独立的 HTTP 请求。
+
+**机制**：客户端携带幂等键，服务端首次执行并存储响应，后续同键请求**原样重放**。
+
+| 项 | 值 |
+| --- | --- |
+| 键的来源 | `Idempotency-Key` 请求头，或 JSON body 的 `idempotencyKey` 字段 |
+| 键长度 | 8–128 个可打印字符，**大小写敏感** |
+| 作用域 | 每个端点独立（`scope`），同键不同端点互不影响 |
+| 请求指纹 | 归一化 body 的 SHA-256；同键不同 body → **409** |
+| 存储 | `idempotency_keys` 表（`user_version` v20） |
+| 保留期 | 7 天（有界保留，`purge_expired`） |
+| 并发重复 | 第二个请求得到 **409「同一请求正在处理中」**，**绝不重复执行** |
+| 崩溃残留 | 启动时 `_clear_abandoned_idempotency_claims()` 清除 |
+| 无键请求 | **行为与以前完全一致**（机制是 opt-in，老客户端不受影响） |
+
+**已接入的端点**（`run_idempotent` 包装）：
+
+| Method | Path | scope |
+| --- | --- | --- |
+| `POST` | `/api/scan-gun/inbound` | `scan-gun.inbound` |
+| `POST` | `/api/batch-entry/scan` | `batch-entry.scan` |
+| `POST` | `/api/production-batches` | `production-batches.create` |
+| `POST` | `/api/purchase-orders` | `purchase-orders.create` |
+| `POST` | `/api/production-orders` | `production-orders.create` |
+| `POST` | `/api/production-orders/batch` | `production-orders.batch` |
+
+**关键设计：先占位再执行，而不是先查询再执行。**
+朴素的「查键 → 执行 → 存响应」存在竞态：两个并发重复请求都会查不到键、都会执行。
+因此键行在业务逻辑**之前**插入（独立的 `BEGIN IMMEDIATE`），**插入本身就是互斥锁**。
+这与领星推送已有的 `push_in_progress` + `push_started_at` 守卫是同一套恢复语义。
+
+**失败处理**：
+- 业务异常 / 非 2xx → **释放键**，客户端可用同一个键干净重试（事务已回滚，什么都没发生）。
+- 存储响应失败 → 释放键（业务已提交，不能把成功变成报错）。
+- 网络中断（客户端侧）→ 前端**保留**键，重试走重放而非重复执行。
+- 4xx 明确拒绝 → 前端**清除**键，下一次是全新提交。
+
+### 6.2 领域唯一键（原有的等价机制）
 
 | 场景 | 机制 |
 | --- | --- |
@@ -141,10 +180,12 @@ GET /api/production-batches/<int:batch_id>/qr?page=N
 | 批次登记 | 一个生产批次至多一条登记（唯一约束） |
 | 一个采购订单至多一个生产订单 | 唯一约束 |
 
-**缺口**：批次生成、批次登记、采购单创建、生产订单创建、扫码枪入库
-**没有请求级幂等键**。客户端超时重试的确定性依赖上述领域唯一键，
-若领域键不覆盖（例如扫码枪入库的连续数量提交），重试可能产生重复写入。
-（属第五目标）
+### 6.3 尚未接入幂等键的写接口
+
+其余写接口（`PUT`/`DELETE` 类更新与删除、`POST /api/scan` 历史逐台扫码、
+基础资料增删改）**暂无请求级幂等键**。
+它们多为幂等的天然操作（`PUT` 同内容重复提交结果一致），或由唯一约束兜底；
+`POST /api/scan` 仍建议后续接入。
 
 ---
 
