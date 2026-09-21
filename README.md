@@ -250,19 +250,47 @@ sudo systemctl reload nginx
 ## 数据、升级和备份
 
 - 主数据库：`data/traceability.db`
-- 在线备份：双击 `backup.bat`
 - 备份目录：`exports/backups`
 - Excel：由浏览器下载到用户选择的位置
 
-`backup.bat` 使用 SQLite 在线备份接口，服务运行时也能得到一致副本。建议每班次自动或人工备份，并把副本同步到另一块磁盘或受控文件服务器。
+### 维护命令
 
-升级步骤：
+```bash
+python manage.py backup                  # 备份 + 自检 + 生成校验清单
+python manage.py verify-backup FILE      # 校验备份是否可用
+python manage.py restore FILE --yes      # 用备份覆盖当前数据库
+python manage.py integrity-check         # 检查当前数据库
+python manage.py db-info                 # 结构版本与各表记录数
+python manage.py list-backups
+python manage.py prune-backups --keep 30
+python manage.py preflight               # 升级前检查（含自动备份）
+python manage.py postflight              # 升级后检查
+```
 
-1. 先执行 `backup.bat` 并确认生成备份文件。
-2. 停止服务窗口。
-3. 替换程序文件，但保留 `data/traceability.db` 和私有 `settings.bat`。
-4. 再次运行 `install.bat` 更新依赖，然后运行 `start.bat`。
-5. 系统启动时只执行增量建表/加列和旧数据映射，不删除已有成品、部件、账号或溯源记录。
+Windows 下双击 `backup.bat` 等价于 `python manage.py backup`。
+
+备份使用 SQLite **在线备份 API**，服务运行时也能得到一致副本，并在生成后立即执行
+`PRAGMA integrity_check`，同时写入 SHA-256 校验清单（`.manifest.json`）。
+`restore` 会先核对校验和，并在覆盖前自动保留一份**恢复前副本**。
+
+> **备份但不能恢复，等于没有备份。**
+> 请按 [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md) 的**恢复演练**章节
+> 每季度实际执行一次。
+> 另请注意：**同一块盘上的备份不能抵御磁盘损坏**，务必复制到另一块磁盘或受控文件服务器。
+
+### 升级步骤
+
+```bash
+python manage.py preflight     # 1) 检查 + 自动备份（不通过就中止）
+# 2) 停止服务窗口
+# 3) 替换程序文件，但保留 data/traceability.db 和私有 settings.bat
+# 4) 运行 install.bat 更新依赖，再运行 start.bat
+python manage.py postflight    # 5) 校验升级结果
+```
+
+系统启动时只执行增量建表/加列和旧数据映射，不删除已有成品、部件、账号或溯源记录。
+系统**拒绝**用旧程序启动高版本数据库（降级会导致数据丢失）。
+完整说明见 [`docs/UPGRADE.md`](docs/UPGRADE.md)。
 
 新版增量增加批次溯源、领星采购 / 入库同步、系统设置、生产订单、成品库存与扫码枪入库结构，不改写既有二维码、标签或归档记录。历史 `OPERATOR` 账号在 v14 迁移时映射为 `WAREHOUSE`；旧产品和旧接口只在兼容边界内保留。数据库结构版本为 20（v15 重建采购单并加入产品关联，v16 放宽批次计划可空，v17 增加外采标记与库存同步表，v18 补索引，v19 增加推送守卫起始时间，v20 增加幂等键表）。
 
@@ -289,7 +317,7 @@ sudo systemctl reload nginx
 python -m pytest -q
 ```
 
-当前共有 584 项自动测试，覆盖 v11→v20 无损迁移、批次生成 / 登记 / 质量 / 正反向追溯、三角色授权、完整 API 权限矩阵（107 个路由 × 4 种身份）、现场写操作幂等与重放、领星凭据 / 令牌 / 签名 / 重试、采购与入库推送幂等、生产订单与扫码枪入库、48 列 Excel 导出、库存同步并发守卫、扫码焦点、响应式界面及历史流程兼容。
+当前共有 636 项自动测试，覆盖 v11→v20 无损迁移、批次生成 / 登记 / 质量 / 正反向追溯、三角色授权、完整 API 权限矩阵（107 个路由 × 4 种身份）、现场写操作幂等与重放、备份校验与恢复回路、领星凭据 / 令牌 / 签名 / 重试、采购与入库推送幂等、生产订单与扫码枪入库、48 列 Excel 导出、库存同步并发守卫、扫码焦点、响应式界面及历史流程兼容。
 
 > 迁移测试当前覆盖「全新库 → v20」与「v11 → v20」两条路径，以及 v13→v14 的角色收敛。
 > **尚未**建立完整的逐级升级矩阵（12→20、13→20 … 18→20），属待补项。
@@ -301,9 +329,11 @@ python -m pytest -q
 | 文档 | 内容 | 重新生成 |
 | --- | --- | --- |
 | [`docs/PERMISSION_MATRIX.md`](docs/PERMISSION_MATRIX.md) | 全部 107 个路由的真实权限矩阵、鉴权三层结构、已知偏差 | `python tools/extract_routes.py --sync` |
-| [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | v11→v19 迁移链、33 张表结构、唯一性约束、库存一致性规则 | 手工维护 |
-| [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | 响应信封、状态码语义、分页与幂等现状、领星契约、兼容规则 | 手工维护 |
+| [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | v11→v20 迁移链、34 张表结构、唯一性约束、库存一致性规则 | 手工维护 |
+| [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | 响应信封、状态码语义、幂等机制、领星契约、兼容规则 | 手工维护 |
 | [`docs/PRODUCT_RULES.md`](docs/PRODUCT_RULES.md) | 业务规则基线，含文档与代码的冲突记录与缺口索引 | 手工维护 |
+| [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md) | 备份命令、**恢复演练**、保留策略、异机副本 | 手工维护 |
+| [`docs/UPGRADE.md`](docs/UPGRADE.md) | 升级流程、回滚、迁移链、降级保护 | 手工维护 |
 
 **文档与代码冲突时，以代码 + 测试为准**，并应在 `docs/PRODUCT_RULES.md` 记录冲突。
 

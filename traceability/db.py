@@ -7,6 +7,14 @@ from pathlib import Path
 from flask import current_app, g
 
 
+# The schema version this build of the code migrates a database to. Bumped only
+# by adding a migration; never edited to change the meaning of a released one.
+# Exposed so maintenance tooling (manage.py, traceability.backup) and the startup
+# log can report "current vs target" without re-deriving it from the migration
+# chain.
+SCHEMA_VERSION = 20
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

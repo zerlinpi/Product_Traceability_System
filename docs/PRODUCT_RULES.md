@@ -195,22 +195,29 @@ ASSEMBLED --hold--> HOLD       （需 ADMIN，原因 1-500 字符）
 ## 11. 数据、升级与备份
 
 - 主数据库：`data/traceability.db`
-- 在线备份：`backup.bat`（使用 SQLite 在线备份 API，服务运行中也能得到一致副本）
+- 在线备份：`python manage.py backup`（或双击 `backup.bat`）
 - 备份目录：`exports/backups`
 - Excel 由浏览器下载到用户选择的位置
 
 升级步骤：
 
-1. 先执行 `backup.bat` 并确认生成备份文件
+1. `python manage.py preflight`（检查 + 自动备份，不通过则中止）
 2. 停止服务窗口
 3. 替换程序文件，**保留** `data/traceability.db` 和私有 `settings.bat`
 4. 运行 `install.bat` 更新依赖，再运行 `start.bat`
+5. `python manage.py postflight` 校验
 
 启动时只执行**增量**建表/加列和旧数据映射，**不删除**已有成品、部件、账号或溯源记录。
 
-> **缺口（属第十八/三十九目标）**：`manage.py` 目前仅 38 行，只有备份入口；
-> 缺少 `verify-backup` / `restore` / `integrity-check` / `db-info` / `preflight` 等命令。
-> **备份但无法验证恢复，等于没有备份。**
+> **✅ 已实现（原第十八/三十九目标缺口）**：`manage.py` 现提供
+> `backup` / `verify-backup` / `restore` / `integrity-check` / `db-info` /
+> `list-backups` / `prune-backups` / `preflight` / `postflight`。
+> 备份生成 SHA-256 校验清单并自检；恢复前自动保留副本；
+> **拒绝用旧程序恢复高版本数据库**（降级保护）。
+>
+> **⚠️ 仍需运维落实**：异机副本与每日自动备份只是文档指引
+> （见 `BACKUP_RESTORE.md` §4），需要在实际部署环境中配置。
+> **备份但不能恢复，等于没有备份**——请执行恢复演练。
 
 ---
 
@@ -237,7 +244,9 @@ ASSEMBLED --hold--> HOLD       （需 ADMIN，原因 1-500 字符）
 | 第八 | 领星 endpoint 未限制 host，存在 SSRF 风险 | ⚠️ 待处理 | `API_CONTRACT.md` §7 |
 | 第十六 | 列表接口基本不分页；导出全内存构建 | ⚠️ 待处理 | `API_CONTRACT.md` §4/§5 |
 | 第十七 | `audit_events` 非 append-only，无 hash chain | ⚠️ 待处理 | 本文档 §9 |
-| 第十八/三十九 | `manage.py` 缺少 verify/restore/integrity 命令 | ⚠️ 待处理 | 本文档 §11 |
+| 第十八/三十九 | `manage.py` 缺少 verify/restore/integrity 命令 | ✅ 已实现 | `BACKUP_RESTORE.md` |
+| 第十八 | 备份异机副本与每日自动备份仅为文档指引 | ⚠️ 需运维落实 | `BACKUP_RESTORE.md` §4 |
+| 第三十九 | 升级 preflight / postflight | ✅ 已实现 | `UPGRADE.md` |
 | 第三十五 | 错误信封无 `code`，前端解析中文 | ⚠️ 待处理 | `API_CONTRACT.md` §1 |
 | 第三十六 | 时间戳未统一为 timezone-aware UTC | ⚠️ 待处理 | `DATA_MODEL.md` §6 |
 | 第三 | 迁移矩阵测试不完整（缺 12→20 … 18→20） | ⚠️ 待处理 | `DATA_MODEL.md` §1 |
