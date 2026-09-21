@@ -1,12 +1,12 @@
 # 数据模型（真实基线）
 
-> 基线：`user_version = 20`，共 **34 张业务表**。
+> 基线：`user_version = 21`，共 **34 张业务表**。
 > 本文档的表清单、主键与外键数量由实际 schema 提取，非手写规范。
 > 迁移实现见 `traceability/db.py`。
 
 ---
 
-## 1. 迁移链（v11 → v20）
+## 1. 迁移链（v11 → v21）
 
 迁移**只增不删**：不删除或重写历史二维码、标签、溯源记录。
 每个版本在一个 `BEGIN IMMEDIATE` 事务内完成，含 `PRAGMA user_version` 的写入，因此失败即整体回滚。
@@ -23,11 +23,13 @@
 | **v18** | 6 个热点外键/过滤列补索引 | 纯增量（索引） |
 | **v19** | `purchase_orders.push_started_at`、`inbound_receipts.push_started_at` | 纯增量（加列） |
 | **v20** | `idempotency_keys` 表 + 状态/起始时间索引 | 纯增量（新表） |
+| **v21** | `audit_events` 加 `prev_hash` / `event_hash` + 只追加触发器 + 历史回填 | 纯增量（加列 + 触发器） |
 
 ### ⚠️ 当前部署状态
 
-`data/traceability.db` 实际为 **`user_version = 18`**，落后代码两个版本。
-下次启动将依次执行 v19、v20。两者均为纯增量（加列 + 新表），不影响既有数据。
+`data/traceability.db` 实际为 **`user_version = 18`**，落后代码三个版本。
+下次启动将依次执行 v19、v20、v21。三者均为纯增量（加列 + 新表 + 触发器），不影响既有数据。
+v21 会为既有审计记录**回填哈希链**，使其同样受完整性校验保护。
 
 ### 启动时附加动作
 
@@ -116,7 +118,33 @@
 | --- | --- | --- | --- |
 | `scan_sessions` | 7 | `station_id` | 3 |
 | `scan_session_items` | 3 | `station_id, position` | 2 |
-| `audit_events` | 13 | `id` | 1 |
+| `audit_events` | 15 | `id` | 1 |
+
+#### `audit_events` — 只追加哈希链（v21）
+
+| 列 | 说明 |
+| --- | --- |
+| `prev_hash` | 上一条记录的 `event_hash`；首条为 `''` |
+| `event_hash` | `sha256(prev_hash + "\n" + 归一化字段)` |
+
+两个数据库触发器**拒绝** `UPDATE` 与 `DELETE`：
+
+```sql
+CREATE TRIGGER audit_events_no_update BEFORE UPDATE ON audit_events
+BEGIN SELECT RAISE(ABORT, 'audit_events 是只追加账本，不允许修改既有记录'); END;
+```
+
+**哈希覆盖 12 个字段**（不含 `id`——它由 AUTOINCREMENT 在 INSERT 后赋值，
+而触发器禁止事后 UPDATE 补写哈希；`event_id` 由调用方预先生成，因此可参与）。
+
+改动任何一行的任何字段都会使**其后所有哈希失效**。
+`python manage.py audit-verify` 会重算全链并报出**第一条**不匹配的记录。
+`python manage.py audit-info` 显示规模、事件分布与触发器状态。
+
+> **已知影响**：`users` 表对 `audit_events.actor_user_id` 声明了
+> `ON DELETE SET NULL`。有了只追加触发器后，删除**有审计记录的**用户会失败
+> 而不是静默改写历史。系统当前没有删除用户的路径（只有停用），所以不会触发；
+> 这是有意的取舍——审计账本优先于级联清理。
 
 ### 2.7 范围授权（**写入但不再参与鉴权**）
 

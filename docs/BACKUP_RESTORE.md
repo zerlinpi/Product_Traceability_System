@@ -16,6 +16,8 @@
 | `python manage.py verify-backup FILE` | 校验备份是否可用（**不改动任何数据**） |
 | `python manage.py restore FILE --yes` | 用备份覆盖当前数据库 |
 | `python manage.py integrity-check` | 检查当前数据库完整性与外键 |
+| `python manage.py audit-verify` | 校验审计账本哈希链是否完整 |
+| `python manage.py audit-info` | 审计账本规模、事件分布与触发器状态 |
 | `python manage.py db-info` | 结构版本、体量、各表记录数 |
 | `python manage.py list-backups` | 列出备份 |
 | `python manage.py prune-backups --keep N` | 清理旧备份 |
@@ -53,7 +55,7 @@ python manage.py verify-backup exports/backups/traceability_XXXXXXXXTXXXXXX.db
 
 ```
 校验：exports/backups/traceability_20260722T103000_0800.db
-    结构版本  20
+    结构版本  21
     自检      ok
     SHA-256   3da4b315...
 [OK] 备份可用
@@ -87,7 +89,7 @@ python manage.py restore exports/backups/traceability_20260722T103000_0800.db --
     来源          exports/backups/traceability_20260722T103000_0800.db
     当前数据库    data/traceability.db
     恢复前副本    exports/backups/traceability_pre-restore_20260722T110000.db
-    结构版本      20
+    结构版本      21
 ```
 
 **注意 `恢复前副本` 这一行**：恢复前的数据库已自动另存。恢复错了可以从它回滚。
@@ -96,7 +98,7 @@ python manage.py restore exports/backups/traceability_20260722T103000_0800.db --
 
 ```bash
 python manage.py integrity-check     # 期望：[OK] 通过
-python manage.py db-info             # 期望：结构版本 20，记录数与步骤 0 一致
+python manage.py db-info             # 期望：结构版本 21，记录数与步骤 0 一致
 ```
 
 ### 步骤 5：启动并抽查

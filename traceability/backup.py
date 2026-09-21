@@ -133,11 +133,14 @@ def sha256_file(path: str | Path, *, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
-def _read_only(path: str | Path) -> sqlite3.Connection:
+def open_read_only(path: str | Path) -> sqlite3.Connection:
     """Open a database for inspection without creating or modifying it."""
     connection = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
     connection.row_factory = sqlite3.Row
     return connection
+
+
+_read_only = open_read_only
 
 
 def integrity_check(path: str | Path) -> str:

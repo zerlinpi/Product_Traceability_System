@@ -10,6 +10,7 @@ from typing import Any
 from flask import Flask, current_app, g, jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from traceability.audit_chain import link_event
 from traceability.capabilities import (
     ROLE_ADMIN,
     ROLE_OPERATIONS,
@@ -332,21 +333,47 @@ def _record_security_event(
     event_actor = actor or current_user() or target
     actor_id = event_actor["id"] if event_actor and event_actor["id"] is not None else None
     operator_name = str(event_actor["display_name"]) if event_actor else ""
+    event_id = new_event_id()
+    object_code = str(target["username"])
+    payload_json = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":"))
+    occurred_at = str(current_app.config["NOW_PROVIDER"]())
+    # Security events go into the same append-only ledger as business events, so
+    # they are covered by the hash chain too. ``link_event`` opens a short write
+    # transaction when this call is not already inside one (login/logout are not).
+    prev_hash, event_hash = link_event(
+        database,
+        {
+            "event_id": event_id,
+            "event_type": event_type,
+            "object_type": "USER",
+            "object_code": object_code,
+            "related_object_code": "",
+            "station_id": "",
+            "station_name": "",
+            "operator_name": operator_name,
+            "actor_user_id": actor_id,
+            "reason": "",
+            "payload_json": payload_json,
+            "occurred_at": occurred_at,
+        },
+    )
     database.execute(
         """
         INSERT INTO audit_events(
             event_id, event_type, object_type, object_code, operator_name,
-            actor_user_id, payload_json, occurred_at
-        ) VALUES (?, ?, 'USER', ?, ?, ?, ?, ?)
+            actor_user_id, payload_json, occurred_at, prev_hash, event_hash
+        ) VALUES (?, ?, 'USER', ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            new_event_id(),
+            event_id,
             event_type,
-            str(target["username"]),
+            object_code,
             operator_name,
             actor_id,
-            json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":")),
-            str(current_app.config["NOW_PROVIDER"]()),
+            payload_json,
+            occurred_at,
+            prev_hash,
+            event_hash,
         ),
     )
 

@@ -53,6 +53,7 @@ from traceability.auth import (
     require_supplier_access,
     require_warehouse,
 )
+from traceability.audit_chain import link_event
 from traceability.capabilities import Capability
 from traceability.endpoint_policy import (
     EndpointPolicy,
@@ -422,18 +423,41 @@ def record_audit_event(
     actor_user_id = current_actor_id()
     if actor_user_id is not None:
         operator_name = current_actor_name(operator_name)
+    payload_json = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":"))
+    timestamp = occurred_at or now_iso()
     for attempt in range(8):
         try:
+            event_id = new_event_id()
+            # The chain is computed from the values about to be written, so the
+            # row can be inserted complete in one statement. See
+            # traceability/audit_chain.py for why event_id and not id.
+            prev_hash, event_hash = link_event(
+                database,
+                {
+                    "event_id": event_id,
+                    "event_type": event_type,
+                    "object_type": object_type,
+                    "object_code": object_code,
+                    "related_object_code": related_object_code,
+                    "station_id": station_id,
+                    "station_name": station_name,
+                    "operator_name": operator_name,
+                    "actor_user_id": actor_user_id,
+                    "reason": reason,
+                    "payload_json": payload_json,
+                    "occurred_at": timestamp,
+                },
+            )
             database.execute(
                 """
                 INSERT INTO audit_events(
                     event_id, event_type, object_type, object_code, related_object_code,
                     station_id, station_name, operator_name, actor_user_id,
-                    reason, payload_json, occurred_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reason, payload_json, occurred_at, prev_hash, event_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    new_event_id(),
+                    event_id,
                     event_type,
                     object_type,
                     object_code,
@@ -443,8 +467,10 @@ def record_audit_event(
                     operator_name,
                     actor_user_id,
                     reason,
-                    json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":")),
-                    occurred_at or now_iso(),
+                    payload_json,
+                    timestamp,
+                    prev_hash,
+                    event_hash,
                 ),
             )
             return

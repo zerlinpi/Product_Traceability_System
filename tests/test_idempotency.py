@@ -65,7 +65,7 @@ def test_migration_v20_creates_the_idempotency_table(tmp_path):
     _app, database_path, _fake = make_auth_app(tmp_path)
     database = connect_database(database_path)
     try:
-        assert database.execute("PRAGMA user_version").fetchone()[0] == 20
+        assert database.execute("PRAGMA user_version").fetchone()[0] == 21
         columns = {
             row[1] for row in database.execute("PRAGMA table_info(idempotency_keys)").fetchall()
         }

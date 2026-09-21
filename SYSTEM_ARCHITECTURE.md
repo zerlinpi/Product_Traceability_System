@@ -191,7 +191,7 @@
 - `trace_records.status_reason`、`status_updated_at` 和 `status_updated_by_user_id` 均允许旧记录为空。
 - `PUT /api/records/{id}/status` 是管理员单条质量处理入口，`PUT /api/records/status/bulk` 支持最多 200 条记录同事务批量处理；`PUT /api/records/{id}` 支持仓管校对授权范围内的兼容记录，也支持管理员校对全部记录。
 - `GET /api/records` 兼容原有参数，并增加 `generationBatchId`、`dateFrom`、`dateTo` 作为可选筛选条件；不修改历史数据结构。
-- 数据库 `user_version` 当前为 20。v12 增加批次溯源，v13 增加领星采购 / 入库结构，v14 收敛三角色并增加设置、生产订单和成品库存，v15 重建采购单并加入产品关联，v16 放宽批次计划为可空，v17 增加外采标记与库存同步表，v18 补建热点索引，v19 增加推送守卫起始时间，v20 增加幂等键表。迁移不删除或重写历史二维码与溯源记录。完整迁移链见 `docs/DATA_MODEL.md`。
+- 数据库 `user_version` 当前为 21。v12 增加批次溯源，v13 增加领星采购 / 入库结构，v14 收敛三角色并增加设置、生产订单和成品库存，v15 重建采购单并加入产品关联，v16 放宽批次计划为可空，v17 增加外采标记与库存同步表，v18 补建热点索引，v19 增加推送守卫起始时间，v20 增加幂等键表，v21 将审计日志改为只追加哈希链。迁移不删除或重写历史二维码与溯源记录。完整迁移链见 `docs/DATA_MODEL.md`。
 - 领星 OpenAPI 基础认证使用 AppID/AppSecret、官方 Token/Refresh Token 路径和 MD5 + AES-ECB 签名；采购单、入库和库存写入路径必须使用领星为当前企业实际开通的精确路径，不在系统中猜测或伪造端点。
 
 ## 10. 后续兼容路线

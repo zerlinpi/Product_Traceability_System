@@ -23,6 +23,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from traceability.audit_chain import verify_chain
 from traceability.backup import (
     BackupError,
     check_disk_space,
@@ -31,6 +32,7 @@ from traceability.backup import (
     foreign_key_violations,
     integrity_check,
     list_backups,
+    open_read_only,
     prune_backups,
     restore_backup,
     schema_version,
@@ -182,6 +184,91 @@ def command_db_info(args: argparse.Namespace) -> int:
             f"{WARN} 数据库结构版本与程序目标不一致；"
             "启动一次服务会执行增量迁移。"
         )
+    return 0
+
+
+def command_audit_verify(args: argparse.Namespace) -> int:
+    """Recompute the audit hash chain and report the first row that breaks it."""
+    database = Path(args.database)
+    if not database.exists():
+        print(f"{FAIL} 数据库不存在：{database}")
+        return 1
+
+    connection = open_read_only(database)
+    try:
+        report = verify_chain(connection)
+    finally:
+        connection.close()
+
+    print("审计账本校验")
+    print(f"    总记录数        {report.total}")
+    print(f"    已验证          {report.verified}")
+    print(f"    未纳入哈希链    {report.unhashed}")
+    print(f"    链尾哈希        {report.tip[:32] or '（空）'}…" if report.tip else "    链尾哈希        （空）")
+    if report.ok:
+        print(f"{OK} 哈希链完整，未发现篡改痕迹")
+        if report.unhashed:
+            print()
+            print(f"{WARN} 有 {report.unhashed} 条记录未纳入哈希链：")
+            print("        它们早于 v21 迁移，或由外部工具直接写入。")
+            print("        v21 迁移会为既有记录补齐链条；若迁移后仍出现，说明有程序绕过应用写入。")
+        return 0
+
+    print(f"{FAIL} 哈希链已断裂")
+    print(f"    首个异常记录 id {report.first_broken_id}")
+    print(f"    原因            {report.first_broken_reason}")
+    print()
+    print("  这意味着该记录（或它之前的一条）被修改或删除了。")
+    print("  处置建议：")
+    print("    1) 用 python manage.py backup 立即保留当前状态作为证据")
+    print("    2) 与 docs/BACKUP_RESTORE.md 中的历史备份比对，确认丢失了什么")
+    print("    3) 如需恢复，使用未受影响的备份执行 restore")
+    return 1
+
+
+def command_audit_info(args: argparse.Namespace) -> int:
+    """Summarise the audit ledger: size, span, event types, chain status."""
+    database = Path(args.database)
+    if not database.exists():
+        print(f"{FAIL} 数据库不存在：{database}")
+        return 1
+    connection = open_read_only(database)
+    try:
+        total = int(connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0])
+        first = connection.execute(
+            "SELECT occurred_at FROM audit_events ORDER BY id ASC LIMIT 1"
+        ).fetchone()
+        last = connection.execute(
+            "SELECT occurred_at FROM audit_events ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        types = connection.execute(
+            "SELECT event_type, COUNT(*) AS n FROM audit_events "
+            "GROUP BY event_type ORDER BY n DESC LIMIT 15"
+        ).fetchall()
+        triggers = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND tbl_name='audit_events'"
+            ).fetchall()
+        }
+        report = verify_chain(connection)
+    finally:
+        connection.close()
+
+    print("审计账本信息")
+    print(f"    总记录数        {total}")
+    print(f"    最早            {first['occurred_at'] if first else '—'}")
+    print(f"    最新            {last['occurred_at'] if last else '—'}")
+    print(f"    哈希链          {'完整' if report.ok else '已断裂'}")
+    print(f"    未纳入链条      {report.unhashed}")
+    print(
+        "    只追加触发器    "
+        + ("已启用" if {"audit_events_no_update", "audit_events_no_delete"} <= triggers else "缺失（异常）")
+    )
+    if types:
+        print("    事件类型分布：")
+        for row in types:
+            print(f"      {row['event_type']:<32} {row['n']:>8}")
     return 0
 
 
@@ -352,6 +439,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     integrity = sub.add_parser("integrity-check", help="检查当前数据库完整性与外键")
     integrity.set_defaults(handler=command_integrity_check)
+
+    audit_verify = sub.add_parser("audit-verify", help="校验审计账本的哈希链是否完整")
+    audit_verify.set_defaults(handler=command_audit_verify)
+
+    audit_info = sub.add_parser("audit-info", help="显示审计账本的规模与事件分布")
+    audit_info.set_defaults(handler=command_audit_info)
 
     info = sub.add_parser("db-info", help="显示数据库结构与体量信息")
     info.set_defaults(handler=command_db_info)

@@ -164,9 +164,19 @@ ASSEMBLED --hold--> HOLD       （需 ADMIN，原因 1-500 字符）
 - 登录账号是**真实审计身份**，前端**不能伪造**操作员名称。
 - 事件号唯一，记录操作者与时间。
 
-> **缺口（属第十七目标）**：`audit_events` 目前是**普通表**，
-> 应用层未禁止 `UPDATE` / `DELETE`，无数据库级触发器，无 hash chain。
-> 作为产品追溯证据，它还不是 append-only ledger。
+### ✅ 已实现：只追加哈希链（v21）
+
+`audit_events` 现在是**只追加账本**：数据库触发器拒绝 `UPDATE` 与 `DELETE`，
+每行携带 `prev_hash` / `event_hash` 构成哈希链，v21 迁移为既有记录补齐链条。
+
+- `python manage.py audit-verify` — 重算全链，报出第一条不匹配记录
+- `python manage.py audit-info` — 规模、事件分布、触发器状态
+
+**需要更正历史记录时只能新增更正事件**，不能修改既有事件。
+
+> **仍需注意**：哈希链防的是**静默修改**，不防**有数据库完全控制权的攻击者**
+> （可重算整条链）。真正的证据保全需要把链尾哈希定期导出到系统之外——见
+> `SECURITY.md` §6。
 
 ---
 
@@ -243,7 +253,8 @@ ASSEMBLED --hold--> HOLD       （需 ADMIN，原因 1-500 字符）
 | 第六 | 记录归属权规则未实现（仓管可互相校对） | ⚠️ 待业务确认 | 本文档 §10 |
 | 第八 | 领星 endpoint 未限制 host，存在 SSRF 风险 | ✅ 已修复（地址策略 + 重定向校验） | `SECURITY.md` §3 |
 | 第七 | 登录失败无限流 / lockout | ⚠️ 待处理 | `SECURITY.md` §1 |
-| 第十七 | `audit_events` 非 append-only，无 hash chain | ⚠️ 待处理（**高优先级**） | `SECURITY.md` §6 |
+| 第十七 | `audit_events` 非 append-only，无 hash chain | ✅ 已实现（只追加 + 哈希链 + 校验命令） | `SECURITY.md` §6 |
+| 第十七 | 审计链尾未外部锚定 | ⚠️ 待处理 | `SECURITY.md` §6 |
 | 第十九 | systemd 沙箱指令未启用 | ⚠️ 待处理 | `SECURITY.md` §4 |
 | 第三十七 | Excel/CSV 导出未防公式注入 | ⚠️ 待处理 | `SECURITY.md` §7 |
 | 第三十八 | 图片未限制像素尺寸（解压炸弹） | ⚠️ 待处理 | `SECURITY.md` §7 |

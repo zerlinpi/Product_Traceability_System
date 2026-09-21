@@ -47,7 +47,7 @@ def test_batch_end_to_end_generate_register_release_and_trace(tmp_path):
 
     database = connect_database(database_path)
     try:
-        assert database.execute("PRAGMA user_version").fetchone()[0] == 20
+        assert database.execute("PRAGMA user_version").fetchone()[0] == 21
         assert database.execute("SELECT COUNT(*) FROM production_batches").fetchone()[0] == 1
         assert database.execute("SELECT COUNT(*) FROM batch_trace_records").fetchone()[0] == 1
         assert database.execute("SELECT COUNT(*) FROM machines").fetchone()[0] == 0

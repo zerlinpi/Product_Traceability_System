@@ -6,13 +6,21 @@ from pathlib import Path
 
 from flask import current_app, g
 
+from traceability.audit_chain import (
+    GENESIS_HASH,
+    HASHED_FIELDS,
+    TRIGGER_NO_DELETE,
+    TRIGGER_NO_UPDATE,
+    compute_event_hash,
+)
+
 
 # The schema version this build of the code migrates a database to. Bumped only
 # by adding a migration; never edited to change the meaning of a released one.
 # Exposed so maintenance tooling (manage.py, traceability.backup) and the startup
 # log can report "current vs target" without re-deriving it from the migration
 # chain.
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 
 SCHEMA = """
@@ -1327,6 +1335,50 @@ def initialize_database(app) -> None:
                 connection.execute("ROLLBACK")
                 raise
 
+        # v21 turns ``audit_events`` from a plain table into a tamper-evident
+        # append-only ledger. The table is the evidence chain for product
+        # traceability, and until now anyone with a SQLite client could UPDATE or
+        # DELETE a row and every query would keep answering confidently. Two
+        # columns carry a hash chain (prev_hash / event_hash) and two triggers
+        # refuse UPDATE and DELETE outright. Existing rows are backfilled so the
+        # chain covers the whole history rather than starting from today.
+        #
+        # The backfill must run before the triggers are created, and the triggers
+        # are dropped first so a re-run of this migration is not blocked by its
+        # own work. Purely additive: two columns, two triggers, no data removed.
+        current_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if current_version < 21:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute(f"DROP TRIGGER IF EXISTS {TRIGGER_NO_UPDATE}")
+                connection.execute(f"DROP TRIGGER IF EXISTS {TRIGGER_NO_DELETE}")
+                _ensure_column(connection, "audit_events", "prev_hash", "TEXT NOT NULL DEFAULT ''")
+                _ensure_column(connection, "audit_events", "event_hash", "TEXT NOT NULL DEFAULT ''")
+                _backfill_audit_chain(connection)
+                connection.execute(
+                    f"""
+                    CREATE TRIGGER {TRIGGER_NO_UPDATE}
+                    BEFORE UPDATE ON audit_events
+                    BEGIN
+                        SELECT RAISE(ABORT, 'audit_events 是只追加账本，不允许修改既有记录');
+                    END
+                    """
+                )
+                connection.execute(
+                    f"""
+                    CREATE TRIGGER {TRIGGER_NO_DELETE}
+                    BEFORE DELETE ON audit_events
+                    BEGIN
+                        SELECT RAISE(ABORT, 'audit_events 是只追加账本，不允许删除记录');
+                    END
+                    """
+                )
+                connection.execute("PRAGMA user_version = 21")
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
         _clear_abandoned_guards(connection)
         # A claim can only be held by a live request, so anything still
         # 'in_progress' here belongs to a process that died mid-request.
@@ -1335,6 +1387,26 @@ def initialize_database(app) -> None:
         connection.close()
 
     app.teardown_appcontext(close_db)
+
+
+def _backfill_audit_chain(connection: sqlite3.Connection) -> None:
+    """Give every pre-existing audit row its place in the hash chain.
+
+    Runs inside the v21 migration, before the append-only triggers exist. Rows
+    are linked in ``id`` order, which is the order they were written.
+    """
+    columns = ", ".join(("id", *HASHED_FIELDS))
+    rows = connection.execute(
+        f"SELECT {columns} FROM audit_events ORDER BY id ASC"
+    ).fetchall()
+    previous = GENESIS_HASH
+    for row in rows:
+        digest = compute_event_hash(previous, row)
+        connection.execute(
+            "UPDATE audit_events SET prev_hash = ?, event_hash = ? WHERE id = ?",
+            (previous, digest, row["id"]),
+        )
+        previous = digest
 
 
 def _clear_abandoned_idempotency_claims(connection: sqlite3.Connection) -> None:
