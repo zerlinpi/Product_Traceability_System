@@ -117,6 +117,20 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # Annotations render on the run page and in the PR checks view, so a
+          # failure is diagnosable without downloading anything. One ::error::
+          # per line — GitHub does not accept newlines inside a command.
+          echo "--- failing tests ---"
+          grep -E "^(FAILED|ERROR)" pytest-output.txt | head -20 | while IFS= read -r line; do
+            echo "::error title=pytest::$line"
+          done
+          echo "--- first failure detail ---"
+          awk '/^=+ FAILURES =+$/{flag=1} /^=+ short test summary/{flag=0} flag' pytest-output.txt \
+            | grep -E "^(E |_{5,}|tests/|> |AssertionError|[a-zA-Z_]+Error)" \
+            | head -25 | while IFS= read -r line; do
+            echo "::error title=pytest detail::$line"
+          done
+
       - name: Upload the JUnit report
         if: always()
         uses: actions/upload-artifact@v4
