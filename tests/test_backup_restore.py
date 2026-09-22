@@ -593,7 +593,7 @@ def test_cli_postflight_flags_an_accountless_database(tmp_path, live, capsys):
 
 
 def test_cli_backup_with_retention(tmp_path, live, capsys):
-    for day in range(1, 5):
+    for _ in range(1, 5):
         manage.main(
             [
                 "--database",

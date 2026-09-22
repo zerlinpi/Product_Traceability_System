@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib.util
 import json
 import re
@@ -127,10 +128,8 @@ async def _read_identity(
                     "已连接设备，但未从该产品型号配置的通知特征收到完整 SN"
                 ) from error
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     await client.stop_notify(notify_uuid)
-                except Exception:
-                    pass
     except BluetoothCollectionError:
         raise
     except Exception as error:

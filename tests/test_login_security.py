@@ -195,12 +195,12 @@ def test_an_existing_and_a_missing_account_are_indistinguishable(app_and_path):
 def test_a_throttled_attempt_is_also_indistinguishable(app_and_path):
     app, _path = app_and_path
     client = app.test_client()
-    for index in range(LoginPolicy.max_failures_per_username):
+    for _ in range(LoginPolicy.max_failures_per_username):
         _login(client, username="admin", password=WRONG)
     locked_existing = _login(client, username="admin", password=WRONG)
 
     other = app.test_client()
-    for index in range(LoginPolicy.max_failures_per_username):
+    for _ in range(LoginPolicy.max_failures_per_username):
         _login(other, username="no-such-user", password=WRONG)
     locked_missing = _login(other, username="no-such-user", password=WRONG)
 

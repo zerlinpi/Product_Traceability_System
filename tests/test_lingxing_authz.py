@@ -20,7 +20,7 @@ from traceability.db import connect_database
 # Feature: batch-traceability, Property 33: 角色互斥不变式（恰好三角色）
 def test_lingxing_role_set_has_exactly_one_of_the_three_final_roles(tmp_path):
     _app, database_path, _fake = make_auth_app(tmp_path)
-    assert VALID_ROLES == {"ADMIN", "WAREHOUSE", "OPERATIONS"}
+    assert {"ADMIN", "WAREHOUSE", "OPERATIONS"} == VALID_ROLES
 
     database = connect_database(database_path)
     try:

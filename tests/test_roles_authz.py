@@ -20,7 +20,7 @@ from traceability.db import connect_database
 # Feature: batch-traceability, Property 33: 角色互斥不变式（恰好三角色）
 def test_role_set_is_exactly_three_and_database_rejects_operator(tmp_path):
     app, database_path, _fake = make_auth_app(tmp_path)
-    assert VALID_ROLES == {"ADMIN", "WAREHOUSE", "OPERATIONS"}
+    assert {"ADMIN", "WAREHOUSE", "OPERATIONS"} == VALID_ROLES
     database = connect_database(database_path)
     try:
         with pytest.raises(sqlite3.IntegrityError):
@@ -59,7 +59,7 @@ def test_new_capability_routes_enforce_final_role_matrix_without_side_effects(tm
         json={"purchaseOrderId": purchase_order["id"], "quantity": 1},
         headers={"X-CSRF-Token": operations_csrf},
     ).status_code == 403
-    receipt = post(
+    post(
         warehouse,
         warehouse_csrf,
         "/api/inbound-receipts",

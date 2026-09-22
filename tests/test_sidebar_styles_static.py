@@ -193,9 +193,10 @@ def test_sidebar_overlay_display_none_once(rules):
     display_none = re.compile(r"display\s*:\s*none\b")
     count = 0
     for rule in rules:
-        if ".sidebar-overlay" in selector_parts(rule["selector"]):
-            if display_none.search(rule["body"]):
-                count += 1
+        if ".sidebar-overlay" in selector_parts(rule["selector"]) and display_none.search(
+            rule["body"]
+        ):
+            count += 1
     assert count == 1, (
         f".sidebar-overlay must declare `display: none` exactly once across the "
         f"whole stylesheet, found {count}"

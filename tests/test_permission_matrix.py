@@ -518,7 +518,7 @@ def test_role_guards_are_exactly_three_distinct_behaviours():
     """The three guards must stay distinguishable, and VALID_ROLES must not grow."""
     from traceability import auth
 
-    assert VALID_ROLES == {"ADMIN", "WAREHOUSE", "OPERATIONS"}
+    assert {"ADMIN", "WAREHOUSE", "OPERATIONS"} == VALID_ROLES
 
     def denies(guard, role):
         original = auth.current_user

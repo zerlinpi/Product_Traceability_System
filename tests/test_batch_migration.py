@@ -333,26 +333,28 @@ def test_migration_rollback_is_atomic(
                     raise RuntimeError("injected migration failure at column step")
                 return original_ensure_column(connection, table, column, definition)
 
-            with pytest.raises(Exception):
-                with pytest.MonkeyPatch.context() as patcher:
-                    patcher.setattr(
-                        db_module, "_ensure_column", _failing_ensure_column
-                    )
-                    create_app({"TESTING": True, "DATABASE": str(db_path)})
+            with (
+                pytest.raises(RuntimeError),
+                pytest.MonkeyPatch.context() as patcher,
+            ):
+                patcher.setattr(db_module, "_ensure_column", _failing_ensure_column)
+                create_app({"TESTING": True, "DATABASE": str(db_path)})
         else:
             patched_statements = (
                 statements[:failure_point]
                 + (_FAILING_STATEMENT,)
                 + statements[failure_point:]
             )
-            with pytest.raises(Exception):
-                with pytest.MonkeyPatch.context() as patcher:
-                    patcher.setattr(
-                        db_module,
-                        "BATCH_TRACEABILITY_V12_STATEMENTS",
-                        patched_statements,
-                    )
-                    create_app({"TESTING": True, "DATABASE": str(db_path)})
+            with (
+                pytest.raises(sqlite3.OperationalError),
+                pytest.MonkeyPatch.context() as patcher,
+            ):
+                patcher.setattr(
+                    db_module,
+                    "BATCH_TRACEABILITY_V12_STATEMENTS",
+                    patched_statements,
+                )
+                create_app({"TESTING": True, "DATABASE": str(db_path)})
 
         # 3a) Version is rolled back and stays at the pre-migration value.
         assert _user_version(db_path) == 11
@@ -499,7 +501,7 @@ def test_migration_step_failure_aborts_startup_without_usable_service(
 
         # initialize_database must re-raise, so create_app never returns an app.
         app = None
-        with pytest.raises(Exception):
+        with pytest.raises(sqlite3.OperationalError):
             app = create_app({"TESTING": True, "DATABASE": str(db_path)})
         assert app is None, "create_app returned a service despite a failed migration"
 

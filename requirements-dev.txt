@@ -1,0 +1,11 @@
+# Development and CI tooling. Not needed to run the service.
+#
+#   python -m pip install -r requirements.txt -r requirements-dev.txt
+#
+# Then:
+#   python -m pytest tests -q
+#   python -m ruff check .
+-r requirements.txt
+
+ruff==0.16.8
+pytest-cov==7.1.0

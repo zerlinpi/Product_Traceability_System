@@ -321,10 +321,37 @@ python manage.py postflight    # 5) 校验升级结果
 python -m pytest -q
 ```
 
-当前共有 819 项自动测试，覆盖 v11→v22 无损迁移、批次生成 / 登记 / 质量 / 正反向追溯、三角色授权、完整 API 权限矩阵（107 个路由 × 4 种身份）、出站地址策略（SSRF）、审计账本哈希链与篡改检出、登录限流与密码策略、现场写操作幂等与重放、备份校验与恢复回路、领星凭据 / 令牌 / 签名 / 重试、采购与入库推送幂等、生产订单与扫码枪入库、48 列 Excel 导出、库存同步并发守卫、扫码焦点、响应式界面及历史流程兼容。
+当前共有 829 项自动测试，覆盖 v11→v22 无损迁移、批次生成 / 登记 / 质量 / 正反向追溯、三角色授权、完整 API 权限矩阵（107 个路由 × 4 种身份）、出站地址策略（SSRF）、审计账本哈希链与篡改检出、登录限流与密码策略、CI 测试数量门禁、现场写操作幂等与重放、备份校验与恢复回路、领星凭据 / 令牌 / 签名 / 重试、采购与入库推送幂等、生产订单与扫码枪入库、48 列 Excel 导出、库存同步并发守卫、扫码焦点、响应式界面及历史流程兼容。
 
 > 迁移测试当前覆盖「全新库 → v22」与「v11 → v22」两条路径，以及 v13→v14 的角色收敛。
 > **尚未**建立完整的逐级升级矩阵（12→22、13→22 … 18→22），属待补项。
+
+### 开发环境与 CI
+
+```bash
+python -m pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest tests -q                       # 全量测试
+python -m ruff check .                          # 静态检查
+python tools/extract_routes.py --check          # 权限文档是否与代码同步
+python tools/check_test_count.py                # 测试数量是否被削减
+```
+
+依赖**精确锁定**（`==`）。`requirements.lock.txt` 是完整冻结，用于完全复现的安装；
+CI 故意使用 `requirements.txt`，这样上游破坏性发布会以红灯暴露而不是被静默掩盖。
+
+CI（`.github/workflows/ci.yml`）在 push 与 PR 上运行四个门禁：
+
+| 门禁 | 作用 |
+| --- | --- |
+| **ruff** | 语法错误、未定义名、未使用导入、真实 bug 模式、精选安全规则 |
+| **权限矩阵同步** | `docs/PERMISSION_MATRIX.md` 必须与 `app.py` 一致，否则文档会静默失真 |
+| **测试数量守卫** | 收集到的测试数不得低于 `tests/BASELINE_COUNT`——**删掉失败的测试不是修好它的方式** |
+| **pytest + 覆盖率门槛** | Ubuntu 与 Windows 双平台；覆盖率不得低于 82% |
+
+> lint 规则集中**每一处豁免都写在 `pyproject.toml` 里并附理由**。
+> 其中最值得注意的一条：`SIM118` 被禁用，因为 ruff 以为那是 dict，
+> 而实际是 `sqlite3.Row`——它没有 `__contains__`，`x in row` 会遍历**值**，
+> 「简化」后会静默把每个 `actorUserId` 变成 `None`。
 
 详细的产品边界、数据链、状态机、事务规则和兼容路线见 [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md)。
 

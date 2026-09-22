@@ -10,7 +10,6 @@ Feature: batch-traceability, Property 73: 审计账本不可篡改
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -449,7 +448,7 @@ def test_application_writes_produce_a_verifiable_chain(tmp_path):
 
 def test_business_writes_are_chained(tmp_path):
     """A product creation writes an audit event through record_audit_event."""
-    from capability_helpers import post, seed_scenario
+    from capability_helpers import seed_scenario
 
     app, database_path, _fake = make_auth_app(tmp_path)
     admin, csrf = bootstrap_admin(app)

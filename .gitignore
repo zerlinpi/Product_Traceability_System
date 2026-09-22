@@ -12,6 +12,13 @@ tests/.pytest-tmp*/
 .pytest-*.txt
 .pytest-report.xml
 
+# Coverage output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+pytest-report.xml
+
 # Runtime data and backups
 data/*.db
 data/*.db-shm

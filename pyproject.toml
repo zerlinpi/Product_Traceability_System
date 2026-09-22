@@ -1,0 +1,78 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `-ra` prints a summary of non-passing and skipped tests at the end, which is
+# what you actually want when a CI run goes red.
+addopts = "-ra"
+# Fail on an unknown marker rather than silently ignoring a typo'd one.
+filterwarnings = ["error::DeprecationWarning:app", "error::DeprecationWarning:traceability"]
+
+[tool.ruff]
+target-version = "py313"
+# The application file is deliberately long-lined in places (single-line dict
+# comprehensions, SQL strings); E501 is not enabled so that stays a matter of
+# taste rather than a build failure.
+line-length = 110
+extend-exclude = [".venv", "exports", "data", ".hypothesis", "__pycache__"]
+
+[tool.ruff.lint]
+select = [
+    "E4",   # imports
+    "E7",   # statements
+    "E9",   # syntax / runtime errors
+    "F",    # pyflakes: undefined names, unused imports and variables
+    "B",    # bugbear: real bug patterns
+    "C4",   # comprehensions
+    "RET",  # return statements
+    "SIM",  # simplifiable code
+    # A curated slice of bandit. The full `S` set is ~1900 findings, almost all
+    # S101 (assert) — the test suite is built on asserts — which would drown the
+    # signal. These are the ones that matter for a server that handles
+    # credentials and runs SQL.
+    "S105", "S106", "S107",  # hardcoded credential strings
+    "S301",                  # pickle
+    "S324",                  # insecure hash
+    "S501",                  # requests with verify=False
+    "S506",                  # unsafe yaml.load
+    "S602",                  # subprocess with shell=True
+    "S605",                  # shell=True process start
+]
+
+ignore = [
+    # `x in row.keys()` must NOT be rewritten to `x in row` here.
+    #
+    # ruff assumes a dict, but the value is a sqlite3.Row, which has no
+    # __contains__ — `in` falls back to iterating the *values*. Verified:
+    # with a row having an `actor_user_id` column,
+    #     "actor_user_id" in row.keys()  -> True
+    #     "actor_user_id" in row         -> False
+    # so the "simplification" would silently turn every actorUserId into None.
+    "SIM118",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The suite inserts the repository root into sys.path before importing the
+# application, so imports cannot all sit at the top of the file (E402). Test
+# fixtures also legitimately contain passwords and tokens (S105/S106/S107).
+"tests/*.py" = ["E402", "S105", "S106", "S107"]
+"tests/visual_server.py" = ["E402"]
+
+# The shipped default and example credentials. They are deliberate, and they are
+# the reason the production startup guard exists: create_app raises unless
+# PTS_SECRET_KEY and PTS_BOOTSTRAP_ADMIN_PASSWORD are replaced. Keeping them
+# greppable is the point — removing the literals would mean the guard had
+# nothing to compare against.
+"app.py" = ["S105"]
+
+# DEFAULT_PASSWORD is the shipped default that the policy refuses to let anyone
+# set; COMMON_PASSWORDS is the denylist. Both are supposed to be in the source.
+"traceability/passwords.py" = ["S105"]
+
+# S105 here is a naming false positive: DEFAULT_TOKEN_PATH and
+# DEFAULT_REFRESH_TOKEN_PATH are URL paths ("/api/auth-server/oauth/...").
+#
+# S324 (md5) is mandated by the vendor: the Lingxing OpenAPI signature is
+# md5(canonical params) fed into AES-ECB as the `sign` query parameter. It is a
+# protocol requirement, not a security choice — implementing it differently
+# makes the API reject every call. It is not used for password hashing or for
+# any integrity guarantee of ours.
+"traceability/lingxing.py" = ["S105", "S324"]

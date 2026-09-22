@@ -22,8 +22,7 @@ from traceability.db import connect_database
 
 
 def send(client, csrf, path, body, method="post"):
-    response = getattr(client, method)(path, json=body, headers={"X-CSRF-Token": csrf})
-    return response
+    return getattr(client, method)(path, json=body, headers={"X-CSRF-Token": csrf})
 
 
 def created(client, csrf, path, body, method="post"):
@@ -270,6 +269,6 @@ def test_product_attribute_columns_endpoint_lists_the_template(tmp_path):
     assert meta["columns"] == app_module.PRODUCT_ATTRIBUTE_COLUMNS
     assert set(meta["derived"]) == app_module.PRODUCT_ATTRIBUTE_DERIVED_COLUMNS
     # Every derived column is part of the template itself.
-    assert app_module.PRODUCT_ATTRIBUTE_DERIVED_COLUMNS <= set(meta["columns"])
+    assert set(meta["columns"]) >= app_module.PRODUCT_ATTRIBUTE_DERIVED_COLUMNS
     for column in ("SKU", "品名", "供应商名称", "报关HSCODE", "巴西发票默认原产地"):
         assert column in meta["columns"]

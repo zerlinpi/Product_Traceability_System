@@ -18,7 +18,6 @@ from traceability.capabilities import (
     ROLE_WAREHOUSE,
     VALID_ROLES,
     Capability,
-    capabilities_for_role,
     missing_capabilities,
 )
 from traceability.codes import new_event_id
@@ -425,9 +424,9 @@ def initialize_auth(app: Flask) -> None:
     @app.before_request
     def load_authenticated_user():
         if not request.path.startswith("/api/"):
-            return None
+            return
         if request.path in {"/api/health", "/api/auth/login"}:
-            return None
+            return
 
         if app.config["AUTH_DISABLED"]:
             g.current_user = {
@@ -441,7 +440,7 @@ def initialize_auth(app: Flask) -> None:
                 "created_at": "",
                 "updated_at": "",
             }
-            return None
+            return
 
         user_id = session.get("user_id")
         user = None
@@ -468,7 +467,7 @@ def initialize_auth(app: Flask) -> None:
             supplied = request.headers.get("X-CSRF-Token", "")
             if not expected or not supplied or not secrets.compare_digest(expected, supplied):
                 raise AuthError("页面安全令牌已失效，请刷新后重试", 403)
-        return None
+        return
 
     @app.post("/api/auth/login")
     def login():

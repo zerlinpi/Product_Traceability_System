@@ -237,5 +237,4 @@ class PolicyRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 def build_opener(policy: EndpointPolicy) -> urllib.request.OpenerDirector:
     """An opener whose redirect handling enforces ``policy``."""
-    opener = urllib.request.build_opener(PolicyRedirectHandler(policy))
-    return opener
+    return urllib.request.build_opener(PolicyRedirectHandler(policy))

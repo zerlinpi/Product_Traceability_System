@@ -25,7 +25,6 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from app import create_app
-from traceability.db import connect_database
 
 from batch_strategies import (
     build_product_scenario,

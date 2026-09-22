@@ -277,6 +277,34 @@ def _sync_doc(routes: list[dict[str, object]]) -> int:
     return 0
 
 
+def _check_doc(routes: list[dict[str, object]]) -> int:
+    """Fail if the generated table in docs/PERMISSION_MATRIX.md is stale.
+
+    CI runs this so the matrix cannot silently drift from app.py. Without it, a
+    route added without re-running ``--sync`` makes the security documentation
+    quietly wrong — and the documentation is what a reviewer actually reads.
+    """
+    if not MATRIX_DOC.exists():
+        print(f"missing {MATRIX_DOC}", file=sys.stderr)
+        return 2
+    text = MATRIX_DOC.read_text(encoding="utf-8")
+    if BEGIN_MARKER not in text or END_MARKER not in text:
+        print(f"markers not found in {MATRIX_DOC}", file=sys.stderr)
+        return 2
+    _head, rest = text.split(BEGIN_MARKER, 1)
+    current, _tail = rest.split(END_MARKER, 1)
+    if current != f"\n{_markdown_table(routes)}\n":
+        print(
+            f"{MATRIX_DOC.relative_to(ROOT)} is out of date "
+            f"({len(routes)} routes in app.py).\n"
+            "Run: python tools/extract_routes.py --sync",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"{MATRIX_DOC.relative_to(ROOT)} is up to date ({len(routes)} routes)")
+    return 0
+
+
 def main() -> int:
     routes = extract()
 
@@ -286,6 +314,9 @@ def main() -> int:
 
     if "--sync" in sys.argv:
         return _sync_doc(routes)
+
+    if "--check" in sys.argv:
+        return _check_doc(routes)
 
     if "--markdown" in sys.argv:
         print(_markdown_table(routes))

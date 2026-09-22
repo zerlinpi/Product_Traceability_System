@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only: nothing in this workflow writes back to the repository.
+permissions:
+  contents: read
+
+# A new push supersedes an in-flight run on the same branch.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: ruff
+        run: python -m ruff check .
+
+  permission-matrix:
+    name: Permission matrix is in sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      # docs/PERMISSION_MATRIX.md is generated from app.py. Without this check a
+      # route added without re-running --sync makes the security documentation
+      # quietly wrong, and the documentation is what a reviewer actually reads.
+      - name: Verify docs/PERMISSION_MATRIX.md
+        run: python tools/extract_routes.py --check
+
+  test:
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is the deployment target for the factory server; Linux is the
+        # supported alternative (install-linux.sh). Running both catches
+        # platform assumptions rather than discovering them on the shop floor.
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      # Deleting a failing test is the easiest way to make a red build green.
+      # This turns it into a second, louder failure.
+      - name: Guard against test-count regression
+        run: python tools/check_test_count.py
+
+      # The floor is a ratchet, not a target. Measured on Windows (the
+      # deployment target) the suite covers 84.5%; 82 leaves headroom for
+      # branches that only execute on one platform — ble_collector.py has
+      # Windows-only paths, so Linux runs score a little lower. Raise it as
+      # coverage improves; lowering it needs a reason.
+      - name: pytest
+        run: >
+          python -m pytest tests -q
+          --junitxml=pytest-report.xml
+          --cov=app --cov=traceability --cov=manage --cov=tools
+          --cov-report=term-missing
+          --cov-fail-under=82
+
+      - name: Upload the JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report-${{ matrix.os }}
+          path: pytest-report.xml
+          if-no-files-found: warn

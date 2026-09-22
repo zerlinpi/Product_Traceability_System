@@ -77,9 +77,8 @@ def _is_trivial_pattern(password: str) -> bool:
     for sequence in _SEQUENCES:
         if lowered in sequence or lowered in sequence[::-1]:
             return True
-        for suffix_length in range(1, 5):
-            if lowered[: len(sequence)] == sequence and lowered[len(sequence) :].isdigit():
-                return True
+        if lowered.startswith(sequence) and lowered[len(sequence) :].isdigit():
+            return True
     return False
 
 

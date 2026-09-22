@@ -294,7 +294,7 @@ def clean_product_attributes(raw_attributes: object) -> dict[str, Any]:
             continue
         if value is None:
             continue
-        if isinstance(value, bool) or isinstance(value, (int, float)):
+        if isinstance(value, (bool, int, float)):
             attributes[column] = value
             continue
         text = str(value).strip()
@@ -1958,7 +1958,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             try:
                 requested_model_id = int(payload.get("productModelId"))
             except (TypeError, ValueError):
-                raise ApiError("产品型号无效")
+                raise ApiError("产品型号无效") from None
             selected_model = next((row for row in models if row["id"] == requested_model_id), None)
         else:
             device_name = str(payload.get("name") or "")
@@ -2179,7 +2179,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         try:
             limit = int(request.args.get("limit", 200))
         except (TypeError, ValueError):
-            raise ApiError("日志条数必须是整数")
+            raise ApiError("日志条数必须是整数") from None
         if not 1 <= limit <= 500:
             raise ApiError("日志条数需在 1-500 之间")
 
@@ -2565,7 +2565,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         try:
             family_id = int(payload.get("productFamilyId"))
         except (TypeError, ValueError):
-            raise ApiError("请选择产品分类")
+            raise ApiError("请选择产品分类") from None
         database = get_db()
         family = database.execute(
             "SELECT id FROM product_families WHERE id = ? AND active = 1", (family_id,)
@@ -2631,7 +2631,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         try:
             family_id = int(payload.get("productFamilyId", current["product_family_id"]))
         except (TypeError, ValueError):
-            raise ApiError("请选择产品分类")
+            raise ApiError("请选择产品分类") from None
         if not database.execute("SELECT id FROM product_families WHERE id = ?", (family_id,)).fetchone():
             raise ApiError("产品分类不存在")
         name = clean_text(payload.get("name", current["name"]), "产品型号名称", required=True, max_length=100)
@@ -2847,8 +2847,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         payload = request.get_json(silent=True) or {}
         name = clean_text(payload.get("name"), "产品名称", required=True, max_length=100)
         actor_user_id = current_actor_id()
-        actor = current_user()
-        actor_role = actor["role"] if actor else ""
         # Extended product profile; 创建人 defaults to the saving account.
         attributes = clean_product_attributes(payload.get("attributes"))
         creator_name = current_actor_name("系统管理员")
@@ -4748,7 +4746,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         try:
             supplier_id = int(payload.get("supplierId"))
         except (TypeError, ValueError):
-            raise ApiError("请选择供应商")
+            raise ApiError("请选择供应商") from None
         database = get_db()
         supplier = database.execute("SELECT id FROM suppliers WHERE id = ?", (supplier_id,)).fetchone()
         if not supplier:
@@ -5140,7 +5138,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             try:
                 product_model_id = int(raw_model_id)
             except (TypeError, ValueError):
-                raise ApiError("请选择产品型号")
+                raise ApiError("请选择产品型号") from None
             product_model = database.execute(
                 "SELECT * FROM product_models WHERE id = ? AND active = 1",
                 (product_model_id,),
@@ -5171,7 +5169,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 part_type_id = int(raw_slot.get("partTypeId"))
                 quantity = int(raw_slot.get("quantity", 1))
             except (TypeError, ValueError):
-                raise ApiError(f"第 {index} 个槽位的部件类型或数量无效")
+                raise ApiError(f"第 {index} 个槽位的部件类型或数量无效") from None
             if not 1 <= quantity <= MAX_REQUIRED_PARTS:
                 raise ApiError(f"第 {index} 个槽位数量需在 1-{MAX_REQUIRED_PARTS} 之间")
             for quantity_index in range(1, quantity + 1):
@@ -5278,7 +5276,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             try:
                 product_model_id = int(raw_model_id)
             except (TypeError, ValueError):
-                raise ApiError("请选择产品型号")
+                raise ApiError("请选择产品型号") from None
             product_model = database.execute(
                 "SELECT * FROM product_models WHERE id = ? AND active = 1",
                 (product_model_id,),
@@ -5528,7 +5526,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             part_type_id = int(payload.get("partTypeId"))
             quantity = int(payload.get("quantity", 1))
         except (TypeError, ValueError):
-            raise ApiError("部件类型或生成数量无效")
+            raise ApiError("部件类型或生成数量无效") from None
         if not 1 <= quantity <= 100:
             raise ApiError("单次生成数量需在 1-100 之间")
         lot_no = clean_text(payload.get("lotNo"), "生产批次", max_length=80)
@@ -7075,7 +7073,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 continue
             if value is None:
                 fields[column] = ""
-            elif isinstance(value, bool) or isinstance(value, (int, float)):
+            elif isinstance(value, (bool, int, float)):
                 fields[column] = value
             else:
                 text = str(value).strip()
@@ -8356,7 +8354,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         if not isinstance(stored_fields, dict):
             stored_fields = {}
 
-        values: dict[str, Any] = {column: "" for column in PURCHASE_ORDER_EXPORT_COLUMNS}
+        values: dict[str, Any] = dict.fromkeys(PURCHASE_ORDER_EXPORT_COLUMNS, "")
         values["标识号"] = row["id"]
         values["采购单号"] = row["po_no"]
         values["采购方"] = "聚星同创仓库管理系统"

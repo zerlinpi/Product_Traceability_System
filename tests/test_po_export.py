@@ -37,7 +37,9 @@ def test_purchase_order_export_required_values_and_numeric_types(tmp_path):
     order = create_order(client, scenario, 37)
     response = client.get(f"/api/purchase-orders/{order['id']}/export")
     headers, values, formats = read_export(response)
-    row = dict(zip(headers, values))
+    # strict=True so a row with a different arity than the header fails here
+    # rather than silently truncating.
+    row = dict(zip(headers, values, strict=True))
     required = [
         "标识号",
         "供应商",

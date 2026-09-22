@@ -409,9 +409,9 @@ def app_context(tmp_path):
     ],
 )
 def test_saving_a_forbidden_endpoint_is_rejected(app_context, value):
-    from app import clean_lingxing_endpoint
+    from app import ApiError, clean_lingxing_endpoint
 
-    with pytest.raises(Exception) as error:
+    with pytest.raises(ApiError) as error:
         clean_lingxing_endpoint(value, "采购订单写入接口")
     assert "接口" in str(error.value)
 
@@ -436,9 +436,9 @@ def test_a_path_without_a_leading_slash_is_still_refused(app_context):
     ``_endpoint_url`` would tolerate a bare ``erp/sc/x`` at request time, but the
     save-time contract stays strict so what is stored is unambiguous.
     """
-    from app import clean_lingxing_endpoint
+    from app import ApiError, clean_lingxing_endpoint
 
-    with pytest.raises(Exception):
+    with pytest.raises(ApiError):
         clean_lingxing_endpoint("erp/sc/x", "采购订单写入接口")
 
 
