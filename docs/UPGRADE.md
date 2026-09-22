@@ -126,6 +126,7 @@ sudo systemctl start product-traceability
 | v19 | 推送守卫起始时间 |
 | v20 | 幂等键表 |
 | v21 | 审计日志改为只追加哈希链（含历史回填） |
+| v22 | 登录失败计数表（登录限流） |
 
 完整说明见 [`DATA_MODEL.md`](DATA_MODEL.md) 第 1 节。
 

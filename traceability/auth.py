@@ -10,6 +10,7 @@ from typing import Any
 from flask import Flask, current_app, g, jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from traceability import login_guard, passwords
 from traceability.audit_chain import link_event
 from traceability.capabilities import (
     ROLE_ADMIN,
@@ -217,10 +218,17 @@ def _validate_username(value: object) -> str:
     return username
 
 
-def _validate_password(value: object) -> str:
+def _validate_password(value: object, *, username: object = "") -> str:
+    """Reject a password the policy refuses.
+
+    The username is passed so the policy can refuse a password equal to the
+    account name; see ``traceability/passwords.py`` for what is and is not
+    checked, and why the list is deliberately short.
+    """
     password = str(value or "")
-    if not 8 <= len(password) <= 128:
-        raise AuthError("密码长度需为 8-128 个字符")
+    problem = passwords.password_policy_error(password, username=username)
+    if problem:
+        raise AuthError(problem)
     return password
 
 
@@ -480,22 +488,64 @@ def initialize_auth(app: Flask) -> None:
         payload = request.get_json(silent=True) or {}
         username = str(payload.get("username") or "").strip()
         password = str(payload.get("password") or "")
-        row = get_db().execute(
+        database = get_db()
+        timestamp = app.config["NOW_PROVIDER"]()
+        now_epoch = login_guard.to_epoch(timestamp)
+        client_ip = request.remote_addr or ""
+        policy = app.config.get("LOGIN_POLICY") or login_guard.LoginPolicy()
+
+        # Throttle before verifying anything. The rejection is identical whether
+        # the account exists or not, so the response cannot enumerate accounts.
+        status = login_guard.check_lockout(
+            database, username=username, ip=client_ip, now_epoch=now_epoch, policy=policy
+        )
+        if status.locked:
+            _record_security_event(
+                database,
+                "USER_LOGIN_BLOCKED",
+                {"id": None, "username": username or "(空)", "display_name": ""},
+                payload={"reason": status.reason, "retryAfterSeconds": status.retry_after_seconds},
+            )
+            raise AuthError(status.message(), 429)
+
+        row = database.execute(
             "SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)
         ).fetchone()
-        if not row or not row["active"] or not check_password_hash(row["password_hash"], password):
+        verified = bool(
+            row and row["active"] and check_password_hash(row["password_hash"], password)
+        )
+        login_guard.record_attempt(
+            database,
+            username=username,
+            ip=client_ip,
+            succeeded=verified,
+            occurred_at=timestamp,
+            now_epoch=now_epoch,
+        )
+        if not verified:
+            _record_security_event(
+                database,
+                "USER_LOGIN_FAILED",
+                row or {"id": None, "username": username or "(空)", "display_name": ""},
+                payload={"reason": "账号或密码错误"},
+            )
+            # Keep the table bounded without a separate maintenance job.
+            login_guard.prune_attempts(database, now_epoch=now_epoch, policy=policy)
             raise AuthError("账号或密码错误", 401)
 
-        timestamp = app.config["NOW_PROVIDER"]()
-        get_db().execute("UPDATE users SET last_login_at = ? WHERE id = ?", (timestamp, row["id"]))
-        _record_security_event(get_db(), "USER_LOGIN", row, actor=row)
+        # A verified login clears this account's failure budget so a forgotten
+        # password does not linger. The per-IP budget deliberately survives.
+        login_guard.clear_username_failures(database, username=username)
+        database.execute("UPDATE users SET last_login_at = ? WHERE id = ?", (timestamp, row["id"]))
+        _record_security_event(database, "USER_LOGIN", row, actor=row)
+        # A fresh session id on login: the pre-login session must not be reusable.
         session.clear()
         session.permanent = True
         session["user_id"] = row["id"]
         session["auth_version"] = row["session_version"]
         _new_csrf_token()
-        row = get_db().execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
-        return jsonify({"ok": True, "data": user_dict(row, include_csrf=True, database=get_db())})
+        row = database.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+        return jsonify({"ok": True, "data": user_dict(row, include_csrf=True, database=database)})
 
     @app.get("/api/auth/me")
     def auth_me():
@@ -516,8 +566,8 @@ def initialize_auth(app: Flask) -> None:
     def change_password():
         payload = request.get_json(silent=True) or {}
         current_password = str(payload.get("currentPassword") or "")
-        new_password = _validate_password(payload.get("newPassword"))
         user = current_user()
+        new_password = _validate_password(payload.get("newPassword"), username=user["username"])
         if app.config["AUTH_DISABLED"]:
             return jsonify({"ok": True, "data": user_dict(user, include_csrf=True, database=get_db())})
         if not check_password_hash(user["password_hash"], current_password):
@@ -556,7 +606,7 @@ def initialize_auth(app: Flask) -> None:
         display_name = _clean_text(
             payload.get("displayName") or username, "姓名", max_length=60
         )
-        password = _validate_password(payload.get("password"))
+        password = _validate_password(payload.get("password"), username=username)
         role = str(payload.get("role") or "").upper()
         if role not in VALID_ROLES:
             raise AuthError("角色只能是管理员、仓管或运营")
@@ -645,7 +695,7 @@ def initialize_auth(app: Flask) -> None:
             or set(supplier_ids) != set(current_supplier_ids)
         )
         password_value = payload.get("password")
-        password = _validate_password(password_value) if password_value else None
+        password = _validate_password(password_value, username=target["username"]) if password_value else None
         timestamp = app.config["NOW_PROVIDER"]()
         invalidate_session = bool(password) or role != target["role"] or scope_changed
         database.execute("BEGIN IMMEDIATE")

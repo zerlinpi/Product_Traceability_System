@@ -55,6 +55,7 @@ from traceability.auth import (
 )
 from traceability.audit_chain import link_event
 from traceability.capabilities import Capability
+from traceability.login_guard import LoginPolicy
 from traceability.endpoint_policy import (
     EndpointPolicy,
     EndpointPolicyError,
@@ -1683,6 +1684,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         LINGXING_SERVICE_FACTORY=None,
         LINGXING_CLOCK=None,
         LINGXING_SLEEP=None,
+        # Login throttle thresholds. See traceability/login_guard.py for the
+        # defaults and why the lockout is anchored to the oldest failure.
+        LOGIN_POLICY=LoginPolicy.from_environment(),
         LINGXING_API_BASE_URL=os.environ.get(
             "PTS_LINGXING_API_BASE_URL", DEFAULT_API_BASE_URL
         ),

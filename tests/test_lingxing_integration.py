@@ -142,7 +142,7 @@ def test_lingxing_and_factory_end_to_end_with_mock_client() -> None:
 
         connection = connect_database(db_path)
         try:
-            assert connection.execute("PRAGMA user_version").fetchone()[0] == 21
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == 22
             assert connection.execute(
                 "SELECT COUNT(*) AS n FROM audit_events WHERE object_type IN "
                 "('PURCHASE_ORDER', 'INBOUND_RECEIPT', 'PRODUCTION_ORDER', 'INVENTORY_SYNC')"

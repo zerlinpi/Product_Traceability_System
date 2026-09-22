@@ -20,7 +20,7 @@ from traceability.audit_chain import (
 # Exposed so maintenance tooling (manage.py, traceability.backup) and the startup
 # log can report "current vs target" without re-deriving it from the migration
 # chain.
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 
 SCHEMA = """
@@ -1374,6 +1374,39 @@ def initialize_database(app) -> None:
                     """
                 )
                 connection.execute("PRAGMA user_version = 21")
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+
+        # v22 adds the login-attempt ledger behind the login throttle. Failures
+        # are stored as events rather than a counter column: a counter has to be
+        # reset, and resetting it races with concurrent failures, while a windowed
+        # count of recorded rows cannot drift. Old rows are pruned by the same
+        # window, so the table stays bounded. Purely additive.
+        current_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if current_version < 22:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS login_attempts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        scope TEXT NOT NULL CHECK (scope IN ('username', 'ip')),
+                        subject TEXT NOT NULL,
+                        succeeded INTEGER NOT NULL DEFAULT 0 CHECK (succeeded IN (0, 1)),
+                        attempted_at TEXT NOT NULL,
+                        attempted_epoch INTEGER NOT NULL,
+                        username TEXT NOT NULL DEFAULT '',
+                        ip TEXT NOT NULL DEFAULT ''
+                    )
+                    """
+                )
+                connection.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_login_attempts_lookup "
+                    "ON login_attempts(scope, subject, attempted_epoch DESC)"
+                )
+                connection.execute("PRAGMA user_version = 22")
                 connection.execute("COMMIT")
             except Exception:
                 connection.execute("ROLLBACK")

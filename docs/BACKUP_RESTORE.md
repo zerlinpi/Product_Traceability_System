@@ -18,6 +18,8 @@
 | `python manage.py integrity-check` | 检查当前数据库完整性与外键 |
 | `python manage.py audit-verify` | 校验审计账本哈希链是否完整 |
 | `python manage.py audit-info` | 审计账本规模、事件分布与触发器状态 |
+| `python manage.py login-status` | 登录失败计数与锁定状态 |
+| `python manage.py login-unlock --username X` | 解除某账号的登录锁定 |
 | `python manage.py db-info` | 结构版本、体量、各表记录数 |
 | `python manage.py list-backups` | 列出备份 |
 | `python manage.py prune-backups --keep N` | 清理旧备份 |

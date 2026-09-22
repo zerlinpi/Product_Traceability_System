@@ -262,6 +262,8 @@ python manage.py restore FILE --yes      # 用备份覆盖当前数据库
 python manage.py integrity-check         # 检查当前数据库
 python manage.py audit-verify            # 校验审计账本哈希链
 python manage.py audit-info              # 审计账本规模与事件分布
+python manage.py login-status            # 登录失败计数与锁定状态
+python manage.py login-unlock --username X  # 解除某账号的登录锁定
 python manage.py db-info                 # 结构版本与各表记录数
 python manage.py list-backups
 python manage.py prune-backups --keep 30
@@ -319,10 +321,10 @@ python manage.py postflight    # 5) 校验升级结果
 python -m pytest -q
 ```
 
-当前共有 762 项自动测试，覆盖 v11→v21 无损迁移、批次生成 / 登记 / 质量 / 正反向追溯、三角色授权、完整 API 权限矩阵（107 个路由 × 4 种身份）、出站地址策略（SSRF）、审计账本哈希链与篡改检出、现场写操作幂等与重放、备份校验与恢复回路、领星凭据 / 令牌 / 签名 / 重试、采购与入库推送幂等、生产订单与扫码枪入库、48 列 Excel 导出、库存同步并发守卫、扫码焦点、响应式界面及历史流程兼容。
+当前共有 819 项自动测试，覆盖 v11→v22 无损迁移、批次生成 / 登记 / 质量 / 正反向追溯、三角色授权、完整 API 权限矩阵（107 个路由 × 4 种身份）、出站地址策略（SSRF）、审计账本哈希链与篡改检出、登录限流与密码策略、现场写操作幂等与重放、备份校验与恢复回路、领星凭据 / 令牌 / 签名 / 重试、采购与入库推送幂等、生产订单与扫码枪入库、48 列 Excel 导出、库存同步并发守卫、扫码焦点、响应式界面及历史流程兼容。
 
-> 迁移测试当前覆盖「全新库 → v21」与「v11 → v21」两条路径，以及 v13→v14 的角色收敛。
-> **尚未**建立完整的逐级升级矩阵（12→21、13→21 … 18→21），属待补项。
+> 迁移测试当前覆盖「全新库 → v22」与「v11 → v22」两条路径，以及 v13→v14 的角色收敛。
+> **尚未**建立完整的逐级升级矩阵（12→22、13→22 … 18→22），属待补项。
 
 详细的产品边界、数据链、状态机、事务规则和兼容路线见 [`SYSTEM_ARCHITECTURE.md`](SYSTEM_ARCHITECTURE.md)。
 
@@ -331,7 +333,7 @@ python -m pytest -q
 | 文档 | 内容 | 重新生成 |
 | --- | --- | --- |
 | [`docs/PERMISSION_MATRIX.md`](docs/PERMISSION_MATRIX.md) | 全部 107 个路由的真实权限矩阵、鉴权三层结构、已知偏差 | `python tools/extract_routes.py --sync` |
-| [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | v11→v21 迁移链、34 张表结构、唯一性约束、库存一致性规则 | 手工维护 |
+| [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) | v11→v22 迁移链、35 张表结构、唯一性约束、库存一致性规则 | 手工维护 |
 | [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | 响应信封、状态码语义、幂等机制、领星契约、兼容规则 | 手工维护 |
 | [`docs/PRODUCT_RULES.md`](docs/PRODUCT_RULES.md) | 业务规则基线，含文档与代码的冲突记录与缺口索引 | 手工维护 |
 | [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md) | 备份命令、**恢复演练**、保留策略、异机副本 | 手工维护 |

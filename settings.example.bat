@@ -29,3 +29,11 @@ rem (e.g. /erp/sc/routing/...) for the *_URL settings above.
 set "PTS_LINGXING_ALLOWED_HOSTS="
 set "PTS_LINGXING_ALLOW_HTTP=0"
 set "PTS_LINGXING_ALLOW_PRIVATE_HOSTS=0"
+
+rem Login throttle (v22). Counted per account and per source address inside a
+rem sliding window. An operator locked out mid-shift can be cleared with
+rem   python manage.py login-unlock --username <account>
+set "PTS_LOGIN_WINDOW_SECONDS=900"
+set "PTS_LOGIN_LOCKOUT_SECONDS=900"
+set "PTS_LOGIN_MAX_FAILURES_PER_USERNAME=5"
+set "PTS_LOGIN_MAX_FAILURES_PER_IP=20"

@@ -164,7 +164,7 @@ def test_migration_preserves_read_only_history(component_count: int, quantity: i
         after = _snapshot(db_path)
 
         # 3a) Migration lands on the fixed target version (Requirement 8.2 context).
-        assert _user_version(db_path) == 21
+        assert _user_version(db_path) == 22
 
         # 3b) Every pre-existing table's row count must not decrease (Req 8.1).
         for table, before_state in before.items():
@@ -395,7 +395,7 @@ def test_migration_skip_is_idempotent(
 
     When startup detects ``user_version`` already equal to (or above) the
     current target, the migration must be skipped and make no change to the
-    database structure or data: ``user_version`` stays at 21 and the
+    database structure or data: ``user_version`` stays at 22 and the
     whole-database snapshot is byte-for-byte identical across arbitrarily many
     re-initializations.
 
@@ -409,7 +409,7 @@ def test_migration_skip_is_idempotent(
         #    _seed_history runs create_app through every migration to v14.
         _seed_history(db_path, component_count, quantity)
 
-        assert _user_version(db_path) == 21
+        assert _user_version(db_path) == 22
         before = _snapshot(db_path)
         # The v12 tables exist in the already-migrated baseline.
         for table in _V12_TABLES:
@@ -421,7 +421,7 @@ def test_migration_skip_is_idempotent(
             create_app({"TESTING": True, "DATABASE": str(db_path)})
 
             # 3a) Version is unchanged: the skip never bumps or rewrites it.
-            assert _user_version(db_path) == 21
+            assert _user_version(db_path) == 22
 
             # 3b) The whole-database snapshot is unchanged (no structure/data
             #     changes of any kind), i.e. the migration was a true no-op.
@@ -459,7 +459,7 @@ def test_successful_migration_lands_on_current_user_version() -> None:
         app = create_app({"TESTING": True, "DATABASE": str(db_path)})
 
         # The migration lands on the fixed target version (Req 8.2).
-        assert _user_version(db_path) == 21
+        assert _user_version(db_path) == 22
 
         # And the resulting service is actually usable end to end.
         for table in _V12_TABLES:

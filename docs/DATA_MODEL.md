@@ -1,12 +1,12 @@
 # 数据模型（真实基线）
 
-> 基线：`user_version = 21`，共 **34 张业务表**。
+> 基线：`user_version = 22`，共 **35 张业务表**。
 > 本文档的表清单、主键与外键数量由实际 schema 提取，非手写规范。
 > 迁移实现见 `traceability/db.py`。
 
 ---
 
-## 1. 迁移链（v11 → v21）
+## 1. 迁移链（v11 → v22）
 
 迁移**只增不删**：不删除或重写历史二维码、标签、溯源记录。
 每个版本在一个 `BEGIN IMMEDIATE` 事务内完成，含 `PRAGMA user_version` 的写入，因此失败即整体回滚。
@@ -24,11 +24,12 @@
 | **v19** | `purchase_orders.push_started_at`、`inbound_receipts.push_started_at` | 纯增量（加列） |
 | **v20** | `idempotency_keys` 表 + 状态/起始时间索引 | 纯增量（新表） |
 | **v21** | `audit_events` 加 `prev_hash` / `event_hash` + 只追加触发器 + 历史回填 | 纯增量（加列 + 触发器） |
+| **v22** | `login_attempts` 表 + 查询索引 | 纯增量（新表） |
 
 ### ⚠️ 当前部署状态
 
-`data/traceability.db` 实际为 **`user_version = 18`**，落后代码三个版本。
-下次启动将依次执行 v19、v20、v21。三者均为纯增量（加列 + 新表 + 触发器），不影响既有数据。
+`data/traceability.db` 实际为 **`user_version = 18`**，落后代码四个版本。
+下次启动将依次执行 v19、v20、v21、v22。四者均为纯增量（加列 + 新表 + 触发器），不影响既有数据。
 v21 会为既有审计记录**回填哈希链**，使其同样受完整性校验保护。
 
 ### 启动时附加动作
@@ -158,6 +159,24 @@ BEGIN SELECT RAISE(ABORT, 'audit_events 是只追加账本，不允许修改既�
 | 表 | 列 | 主键 | 外键 |
 | --- | --- | --- | --- |
 | `idempotency_keys` | 9 | `idempotency_key, scope` | 1 |
+
+### 2.9 登录失败计数（v22 新增）
+
+| 表 | 列 | 主键 | 外键 |
+| --- | --- | --- | --- |
+| `login_attempts` | 8 | `id` | 0 |
+
+| 列 | 说明 |
+| --- | --- |
+| `scope` | `username` 或 `ip`（CHECK 约束），两个维度独立计数 |
+| `subject` | 账号名（小写归一）或来源地址 |
+| `succeeded` | 0 = 失败，1 = 成功；成功记录保留以便审计 |
+| `attempted_at` / `attempted_epoch` | 审计用 ISO 字符串 / 窗口计算用 epoch |
+| `username` / `ip` | 便于排查的冗余字段 |
+
+> **失败记录为事件而非计数器**：计数器需要重置，而重置与并发失败存在竞态；
+> 按窗口统计已记录的行不会失准。超出窗口的行由 `prune_attempts` 清理，表大小有界。
+> 见 `SECURITY.md` §1 与 `traceability/login_guard.py`。
 
 | 列 | 说明 |
 | --- | --- |

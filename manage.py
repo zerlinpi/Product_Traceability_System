@@ -24,6 +24,8 @@ from datetime import datetime
 from pathlib import Path
 
 from traceability.audit_chain import verify_chain
+from traceability.db import connect_database
+from traceability.login_guard import LoginPolicy, recent_failures, unlock
 from traceability.backup import (
     BackupError,
     check_disk_space,
@@ -272,6 +274,79 @@ def command_audit_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_login_status(args: argparse.Namespace) -> int:
+    """Show the current login-failure budgets."""
+    database = Path(args.database)
+    if not database.exists():
+        print(f"{FAIL} 数据库不存在：{database}")
+        return 1
+    policy = LoginPolicy.from_environment()
+    now_epoch = int(datetime.now().timestamp())
+    connection = open_read_only(database)
+    try:
+        rows = recent_failures(connection, policy=policy, now_epoch=now_epoch)
+        stored = int(connection.execute("SELECT COUNT(*) FROM login_attempts").fetchone()[0])
+    finally:
+        connection.close()
+
+    print("登录失败计数（窗口内）")
+    print(f"    窗口            {policy.window_seconds // 60} 分钟（相对当前时间）")
+    print(f"    锁定时长        {policy.lockout_seconds // 60} 分钟")
+    print(f"    账号阈值        {policy.max_failures_per_username}")
+    print(f"    来源地址阈值    {policy.max_failures_per_ip}")
+    print(f"    存储中的记录    {stored} 条（含窗口外，会在窗口滑过后自动清理）")
+    if not rows:
+        print(f"{OK} 窗口内没有失败记录")
+        return 0
+    print("    当前计数：")
+    for row in rows:
+        threshold = (
+            policy.max_failures_per_username
+            if row["scope"] == "username"
+            else policy.max_failures_per_ip
+        )
+        state = "已锁定" if row["failures"] >= threshold else "未锁定"
+        print(
+            f"      {row['scope']:<9} {row['subject']:<24} "
+            f"{row['failures']}/{threshold}  {state}  最后 {row['lastAt']}"
+        )
+    return 0
+
+
+def command_login_unlock(args: argparse.Namespace) -> int:
+    """Clear the failure budget for a username and/or an IP.
+
+    Exists because a per-username lockout can be abused to keep a real operator
+    out mid-shift — see traceability/login_guard.py.
+    """
+    if not args.username and not args.ip:
+        print(f"{FAIL} 请指定 --username 或 --ip（或两者）")
+        return 2
+    database = Path(args.database)
+    if not database.exists():
+        print(f"{FAIL} 数据库不存在：{database}")
+        return 1
+
+    connection = connect_database(database)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            removed = unlock(connection, username=args.username or "", ip=args.ip or "")
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+    finally:
+        connection.close()
+
+    targets = "、".join(filter(None, [args.username, args.ip]))
+    if removed:
+        print(f"{OK} 已清除 {targets} 的登录失败记录（{removed} 条）")
+    else:
+        print(f"{OK} {targets} 没有需要清除的失败记录")
+    return 0
+
+
 def command_list_backups(args: argparse.Namespace) -> int:
     backups = list_backups(args.backup_dir)
     if not backups:
@@ -445,6 +520,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit_info = sub.add_parser("audit-info", help="显示审计账本的规模与事件分布")
     audit_info.set_defaults(handler=command_audit_info)
+
+    login_status = sub.add_parser("login-status", help="显示当前登录失败计数与锁定状态")
+    login_status.set_defaults(handler=command_login_status)
+
+    login_unlock = sub.add_parser("login-unlock", help="清除指定账号/来源地址的登录失败记录")
+    login_unlock.add_argument("--username", default="", help="要解锁的账号")
+    login_unlock.add_argument("--ip", default="", help="要解锁的来源地址")
+    login_unlock.set_defaults(handler=command_login_unlock)
 
     info = sub.add_parser("db-info", help="显示数据库结构与体量信息")
     info.set_defaults(handler=command_db_info)

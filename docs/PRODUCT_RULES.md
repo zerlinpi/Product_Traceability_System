@@ -252,7 +252,8 @@ ASSEMBLED --hold--> HOLD       （需 ADMIN，原因 1-500 字符）
 | 第六 | 范围守卫失效、鉴权分散两层 | ✅ 已收敛（能力表）；D5 待处理 | `PERMISSION_MATRIX.md` |
 | 第六 | 记录归属权规则未实现（仓管可互相校对） | ⚠️ 待业务确认 | 本文档 §10 |
 | 第八 | 领星 endpoint 未限制 host，存在 SSRF 风险 | ✅ 已修复（地址策略 + 重定向校验） | `SECURITY.md` §3 |
-| 第七 | 登录失败无限流 / lockout | ⚠️ 待处理 | `SECURITY.md` §1 |
+| 第七 | 登录失败无限流 / lockout | ✅ 已实现（双维度限流 + 短时锁定 + 失败审计） | `SECURITY.md` §1 |
+| 第七 | 限流依赖 `remote_addr`，反代后需可信代理头 | ⚠️ 待处理 | `SECURITY.md` §1 |
 | 第十七 | `audit_events` 非 append-only，无 hash chain | ✅ 已实现（只追加 + 哈希链 + 校验命令） | `SECURITY.md` §6 |
 | 第十七 | 审计链尾未外部锚定 | ⚠️ 待处理 | `SECURITY.md` §6 |
 | 第十九 | systemd 沙箱指令未启用 | ⚠️ 待处理 | `SECURITY.md` §4 |
