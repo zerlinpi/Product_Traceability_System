@@ -309,10 +309,10 @@ def _impl_scan_gun_inbound():
 | `POST` | `/api/auth/login` | public (no login) |  | handler | yes |
 | `POST` | `/api/auth/logout` | any authenticated |  | handler |  |
 | `GET` | `/api/auth/me` | any authenticated |  | handler |  |
-| `POST` | `/api/batch-entry/scan` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_batch_entry_scan, run_idempotent, success | yes |
+| `POST` | `/api/batch-entry/scan` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_batch_entry_scan, run_idempotent | yes |
 | `GET` | `/api/batch-trace-records` | any authenticated |  | handler |  |
 | `POST` | `/api/batch-trace-records/<int:record_id>/hold` | ADMIN |  | handler | yes |
-| `POST` | `/api/batch-trace-records/<int:record_id>/pass` | ADMIN |  | service: success, transition_batch_quality | yes |
+| `POST` | `/api/batch-trace-records/<int:record_id>/pass` | ADMIN |  | service: transition_batch_quality | yes |
 | `POST` | `/api/batch-trace/query` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `POST` | `/api/bluetooth/discover` | any authenticated |  | handler |  |
 | `POST` | `/api/bluetooth/read-sn` | any authenticated |  | handler |  |
@@ -358,7 +358,7 @@ def _impl_scan_gun_inbound():
 | `DELETE` | `/api/product-models/<int:model_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `PUT` | `/api/product-models/<int:model_id>` | ADMIN |  | handler | yes |
 | `GET` | `/api/production-batches` | any authenticated |  | handler |  |
-| `POST` | `/api/production-batches` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_batch, run_idempotent, success | yes |
+| `POST` | `/api/production-batches` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_batch, run_idempotent | yes |
 | `GET` | `/api/production-batches/<int:batch_id>` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-batches/<int:batch_id>/qr` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-orders` | ADMIN + WAREHOUSE |  | handler |  |
@@ -382,8 +382,8 @@ def _impl_scan_gun_inbound():
 | `GET` | `/api/purchase-orders/<int:purchase_order_id>/sync-status` | ADMIN + OPERATIONS |  | handler |  |
 | `GET` | `/api/purchase-orders/export` | ADMIN + OPERATIONS |  | handler |  |
 | `GET` | `/api/records` | ADMIN + WAREHOUSE scope:product(NOOP) | `RECORD_VIEW` | handler |  |
-| `DELETE` | `/api/records/<int:record_id>` | ADMIN + WAREHOUSE scope:product(NOOP) | `RECORD_DELETE` | service: editable_record, success | yes |
-| `PUT` | `/api/records/<int:record_id>` | ADMIN + WAREHOUSE scope:product+scope:supplier(NOOP) | `RECORD_EDIT` | service: editable_record, success | yes |
+| `DELETE` | `/api/records/<int:record_id>` | ADMIN + WAREHOUSE scope:product(NOOP) | `RECORD_DELETE` | service: editable_record | yes |
+| `PUT` | `/api/records/<int:record_id>` | ADMIN + WAREHOUSE scope:product+scope:supplier(NOOP) | `RECORD_EDIT` | service: editable_record | yes |
 | `PUT` | `/api/records/<int:record_id>/status` | ADMIN |  | handler | yes |
 | `GET` | `/api/records/export.xlsx` | any authenticated |  | handler |  |
 | `PUT` | `/api/records/status/bulk` | ADMIN |  | handler | yes |
