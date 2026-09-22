@@ -1,0 +1,25 @@
+# Line endings are a property of the repository, not of whoever cloned it.
+#
+# Windows batch files must use CRLF: cmd.exe mis-parses LF-only batch files,
+# particularly around labels and `goto`, and the failure is silent until someone
+# runs the script. Before this file existed the correct endings came only from
+# the developer's local `core.autocrlf=true`; a clone on Linux (or with
+# autocrlf=false) produced LF files that would not run on the factory server.
+#
+# tests/test_system.py::test_windows_launch_scripts_use_cmd_safe_encoding asserts
+# both properties (UTF-8 BOM and CRLF) for start.bat, install.bat, backup.bat and
+# settings.example.bat, so this is enforced rather than merely documented.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Shell scripts are the opposite: CRLF makes them unrunnable on Linux.
+*.sh text eol=lf
+
+# Binary assets must never be normalised.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
