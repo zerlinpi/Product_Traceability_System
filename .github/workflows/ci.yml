@@ -84,18 +84,45 @@ jobs:
       # branches that only execute on one platform — ble_collector.py has
       # Windows-only paths, so Linux runs score a little lower. Raise it as
       # coverage improves; lowering it needs a reason.
+      #
+      # Output is teed to a file so the failure step below can surface it. Job
+      # logs need repository admin rights to read through the API, which makes a
+      # cross-platform failure hard to diagnose from outside; the step summary
+      # is readable by anyone who can see the run.
       - name: pytest
-        run: >
-          python -m pytest tests -q
-          --junitxml=pytest-report.xml
-          --cov=app --cov=traceability --cov=manage --cov=tools
-          --cov-report=term-missing
-          --cov-fail-under=82
+        shell: bash
+        run: |
+          set +e
+          python -m pytest tests -q \
+            --junitxml=pytest-report.xml \
+            --cov=app --cov=traceability --cov=manage --cov=tools \
+            --cov-report=term-missing \
+            --cov-fail-under=82 2>&1 | tee pytest-output.txt
+          exit "${PIPESTATUS[0]}"
+
+      - name: Surface the failures
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo "## pytest failures"
+            echo ""
+            echo "### Failing tests"
+            echo '```'
+            grep -E "^(FAILED|ERROR)" pytest-output.txt | head -50 || true
+            echo '```'
+            echo "### Tail of the run"
+            echo '```'
+            tail -150 pytest-output.txt || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the JUnit report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pytest-report-${{ matrix.os }}
-          path: pytest-report.xml
+          path: |
+            pytest-report.xml
+            pytest-output.txt
           if-no-files-found: warn
