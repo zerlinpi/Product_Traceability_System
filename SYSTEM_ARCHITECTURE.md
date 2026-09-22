@@ -194,7 +194,55 @@
 - 数据库 `user_version` 当前为 21。v12 增加批次溯源，v13 增加领星采购 / 入库结构，v14 收敛三角色并增加设置、生产订单和成品库存，v15 重建采购单并加入产品关联，v16 放宽批次计划为可空，v17 增加外采标记与库存同步表，v18 补建热点索引，v19 增加推送守卫起始时间，v20 增加幂等键表，v21 将审计日志改为只追加哈希链。迁移不删除或重写历史二维码与溯源记录。完整迁移链见 `docs/DATA_MODEL.md`。
 - 领星 OpenAPI 基础认证使用 AppID/AppSecret、官方 Token/Refresh Token 路径和 MD5 + AES-ECB 签名；采购单、入库和库存写入路径必须使用领星为当前企业实际开通的精确路径，不在系统中猜测或伪造端点。
 
-## 10. 后续兼容路线
+## 10. 代码结构与分层
+
+### 10.1 目录职责
+
+| 路径 | 职责 | 约束 |
+| --- | --- | --- |
+| `app.py` | 应用工厂 + 路由定义 + 领域序列化 | 正在拆分，见 10.3 |
+| `traceability/` | 与 Flask 应用解耦的支撑模块 | **不得**反向导入 `app` |
+| `traceability/auth.py` | 会话、CSRF、角色装饰器、`AuthError` | |
+| `traceability/db.py` | 连接、迁移链、启动清理 | 迁移只能增量 |
+| `traceability/errors.py` | `ApiError` | 无依赖 |
+| `traceability/responses.py` | 成功/失败信封、安全响应头 | 依赖 `flask.jsonify` |
+| `traceability/validators.py` | 入参校验与规范化 | **纯函数**，仅依赖 stdlib + `ApiError` |
+| `traceability/endpoint_policy.py` | 出站地址策略（SSRF） | 不依赖 Flask |
+| `traceability/login_guard.py` | 登录限流 | 不依赖 Flask |
+| `traceability/passwords.py` | 密码策略 | 不依赖 Flask |
+| `traceability/audit_chain.py` | 审计哈希链 | 不依赖 Flask |
+| `tools/` | 开发与 CI 工具（不参与运行时） | |
+
+**分层规则**：`traceability/*` 可以互相依赖，但**不得**导入 `app`；
+`app.py` 导入 `traceability/*`。这条规则保证支撑模块可独立测试，
+也是把路由拆成蓝图的前提。
+
+### 10.2 为什么响应信封只有一处
+
+`success()` / `failure()` 是唯一构造 `{"ok": ..., "data"/"message": ...}`
+的地方。前端依赖这个结构的精确形状，散落的 `jsonify` 调用意味着任何格式调整
+都要在多处同步修改——之前错误处理器里有 7 处手写的失败信封，现已收拢。
+
+### 10.3 拆分进度
+
+`app.py` 原为 8949 行、单文件、全部 107 个路由都定义在 `create_app()` 内部，
+并通过闭包使用 `success` / `secure_response` 等嵌套函数。
+闭包是拆蓝图的主要障碍，所以顺序是**先抽辅助层，再抽蓝图**。
+
+| 阶段 | 内容 | 状态 |
+| --- | --- | --- |
+| 1a | `errors.py` + `validators.py`（错误类型与纯校验函数） | ✅ 已完成 |
+| 1b | `responses.py`（信封与安全头） | ✅ 已完成 |
+| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 待做 |
+| 3 | 领域序列化函数（`*_dict`）与库存/追溯逻辑外移 | 待做 |
+
+阶段 1 后 `app.py` 约 8861 行。每个阶段都由全量测试（829 项）
+与 `tools/extract_routes.py --check`（路由与权限文档一致）共同守护。
+
+> **拆分不改变任何接口**：路由路径、权限、响应结构、数据库结构全部保持不变，
+> 由测试与权限矩阵门禁保证。
+
+## 11. 后续兼容路线
 
 建议按以下顺序扩展：
 

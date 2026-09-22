@@ -55,7 +55,18 @@ from traceability.auth import (
 )
 from traceability.audit_chain import link_event
 from traceability.capabilities import Capability
+from traceability.errors import ApiError
 from traceability.login_guard import LoginPolicy
+from traceability.responses import failure, secure_response, success
+from traceability.validators import (
+    clean_ble_uuid,
+    clean_text,
+    coerce_export_number,
+    detect_product_image_type,
+    now_iso,
+    parse_bool,
+    safe_archive_name,
+)
 from traceability.endpoint_policy import (
     EndpointPolicy,
     EndpointPolicyError,
@@ -150,29 +161,10 @@ PRODUCT_IMAGE_COLUMNS = ["主图"]
 PRODUCT_IMAGE_MAX_BYTES = 5 * 1024 * 1024
 # Accepted picture formats, keyed by the file signature so a renamed executable
 # can never be stored (the browser-supplied name and type are not trusted).
-PRODUCT_IMAGE_SIGNATURES = (
-    (b"\x89PNG\r\n\x1a\n", "png", "image/png"),
-    (b"\xff\xd8\xff", "jpg", "image/jpeg"),
-    (b"GIF87a", "gif", "image/gif"),
-    (b"GIF89a", "gif", "image/gif"),
-)
 PRODUCT_IMAGE_EXTENSIONS = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
 PRODUCT_IMAGE_NAME_PATTERN = re.compile(r"^[0-9a-f]{8,}-[0-9a-f]{16,}\.(?:png|jpg|gif|webp)$")
 
 
-def detect_product_image_type(data: bytes) -> tuple[str, str]:
-    """Return ``(extension, mimetype)`` for supported image bytes.
-
-    Detection is by file signature, so the stored file really is a picture
-    regardless of the uploaded filename or the declared content type.
-    """
-    for signature, extension, mimetype in PRODUCT_IMAGE_SIGNATURES:
-        if data.startswith(signature):
-            return extension, mimetype
-    # WEBP: "RIFF" .... "WEBP"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "webp", "image/webp"
-    raise ApiError("仅支持 PNG、JPG、GIF 或 WEBP 图片")
 # Filled in by the system from the product record itself, so the form never asks
 # for them and a client cannot desynchronize them from the real product.
 PRODUCT_ATTRIBUTE_DERIVED_COLUMNS = {
@@ -184,13 +176,6 @@ PURCHASE_ORDER_NUMERIC_COLUMNS = {
     "预付比例", "结算账期", "当前汇率", "运费", "其他费用", "单箱数量", "箱数",
     "实际采购量", "含税单价", "税率",
 }
-
-
-class ApiError(Exception):
-    def __init__(self, message: str, status: int = 400):
-        super().__init__(message)
-        self.message = message
-        self.status = status
 
 
 # Requirement 7.3: treadmill (走步机) products moved to batch-level traceability,
@@ -230,48 +215,6 @@ def is_treadmill_product_model(
     if row is None:
         return False
     return (row["family_code"] or "").strip().upper() == TREADMILL_FAMILY_CODE
-
-
-def now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
-
-
-def clean_text(value: object, label: str, *, required: bool = False, max_length: int = 100) -> str:
-    text = str(value or "").strip()
-    if required and not text:
-        raise ApiError(f"请输入{label}")
-    if len(text) > max_length:
-        raise ApiError(f"{label}不能超过 {max_length} 个字符")
-    return text
-
-
-def parse_bool(value: object, default: bool = False) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value != 0
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def coerce_export_number(value: object) -> int | float | None:
-    """Convert a numeric-looking string into int/float for numeric export cells.
-
-    Returns ``None`` when the value is not a plain number so callers can keep
-    the original text.
-    """
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return value
-    text = str(value or "").strip()
-    if not text:
-        return None
-    try:
-        if re.fullmatch(r"-?\d+", text):
-            return int(text)
-        return float(text)
-    except ValueError:
-        return None
 
 
 def clean_product_attributes(raw_attributes: object) -> dict[str, Any]:
@@ -333,12 +276,6 @@ def product_attributes_with_defaults(
     return derived
 
 
-def safe_archive_name(value: object, fallback: str = "item") -> str:
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "_", str(value or "").strip())
-    name = name.strip(". ")
-    return name[:100] or fallback
-
-
 # Lingxing business write endpoints are configured (route path or full URL) in
 # settings so operations can enable the push features without redeploying.
 LINGXING_ENDPOINT_SETTING_KEYS = {
@@ -388,16 +325,6 @@ def clean_lingxing_endpoint(value: object, label: str) -> str:
         except EndpointPolicyError as error:
             raise ApiError(str(error)) from error
     return text
-
-
-def clean_ble_uuid(value: object, label: str, *, required: bool = False) -> str:
-    uuid = clean_text(value, label, required=required, max_length=36).lower()
-    if uuid and not re.fullmatch(
-        r"(?:[0-9a-f]{4}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
-        uuid,
-    ):
-        raise ApiError(f"{label}格式无效")
-    return uuid
 
 
 def require_quality_release(database: sqlite3.Connection) -> bool:
@@ -1736,54 +1663,40 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     initialize_database(app)
     initialize_auth(app)
 
-    @app.after_request
-    def secure_response(response: Response) -> Response:
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-        response.headers.setdefault("Referrer-Policy", "same-origin")
-        if request.path.startswith("/api/"):
-            response.headers.setdefault("Cache-Control", "no-store")
-        response.headers.setdefault(
-            "Content-Security-Policy",
-            "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'",
-        )
-        return response
+    app.after_request(secure_response)
 
     @app.errorhandler(ApiError)
     def handle_api_error(error: ApiError):
-        return jsonify({"ok": False, "message": error.message}), error.status
+        return failure(error.message, error.status)
 
     @app.errorhandler(ValueError)
     def handle_value_error(error: ValueError):
-        return jsonify({"ok": False, "message": str(error)}), 400
+        return failure(str(error), 400)
 
     @app.errorhandler(BluetoothCollectionError)
     def handle_bluetooth_error(error: BluetoothCollectionError):
-        return jsonify({"ok": False, "message": str(error)}), 503
+        return failure(str(error), 503)
 
     @app.errorhandler(LingxingError)
     def handle_lingxing_error(error: LingxingError):
-        return jsonify({"ok": False, "message": error.message}), error.status
+        return failure(error.message, error.status)
 
     @app.errorhandler(sqlite3.IntegrityError)
     def handle_integrity_error(error: sqlite3.IntegrityError):
         app.logger.warning("Database constraint rejected a request: %s", error)
-        return jsonify({"ok": False, "message": "数据已存在或已被其他工位使用，请刷新后重试"}), 409
+        return failure("数据已存在或已被其他工位使用，请刷新后重试", 409)
 
     @app.errorhandler(HTTPException)
     def handle_http_error(error: HTTPException):
         if request.path.startswith("/api/"):
             message = "接口不存在" if error.code == 404 else str(error.description)
-            return jsonify({"ok": False, "message": message}), error.code
+            return failure(message, error.code)
         return error
 
     @app.errorhandler(Exception)
     def handle_unexpected_error(error: Exception):
         app.logger.exception("Unhandled traceability error", exc_info=error)
-        return jsonify({"ok": False, "message": "系统处理失败，请稍后重试"}), 500
-
-    def success(data: Any = None, status: int = 200):
-        return jsonify({"ok": True, "data": data}), status
+        return failure("系统处理失败，请稍后重试", 500)
 
     def run_idempotent(scope: str, producer: Callable[[], Any]) -> Any:
         """Run ``producer`` at most once per (Idempotency-Key, scope).
