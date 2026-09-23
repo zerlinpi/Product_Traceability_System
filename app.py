@@ -53,7 +53,7 @@ from traceability.auth import (
     require_warehouse,
 )
 from traceability.audit_events import record_audit_event
-from traceability.capabilities import Capability
+from traceability.capabilities import ROLE_WAREHOUSE, Capability
 from traceability.errors import ApiError
 from traceability.login_guard import LoginPolicy
 from traceability.responses import failure, secure_response, success
@@ -5279,9 +5279,19 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         ).fetchone()
         if not row:
             raise ApiError("录入记录不存在", 404)
-        operator_id = current_operator_id()
-        if operator_id is not None and row["completed_by_user_id"] != operator_id:
-            raise ApiError("只能修改或删除自己的录入记录", 403)
+        # Ownership: a warehouse operator may only modify or delete their own
+        # entries. An administrator is unrestricted.
+        #
+        # This deliberately does NOT go through current_operator_id(). That
+        # function returns None for every role — a documented decision to disable
+        # product/supplier scoping — and the check that used to live here was
+        # written as ``if operator_id is not None``, so it could never fire. Two
+        # unrelated policies were sharing one helper, and changing the scoping
+        # policy silently switched this one off. It now reads the role directly.
+        actor = current_user()
+        if actor and str(actor["role"]) == ROLE_WAREHOUSE:
+            if row["completed_by_user_id"] != actor["id"]:
+                raise ApiError("只能修改或删除自己的录入记录", 403)
         require_product_model_access(row["product_model_id"])
         return row
 

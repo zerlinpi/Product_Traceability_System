@@ -99,6 +99,55 @@ token 在登录与改密时重新生成。
 | 管理员改角色 | 同上 |
 | 登录 | `session.clear()` 后重建，登录前会话不可复用；CSRF token 重新生成 |
 
+### 记录归属权
+
+**规则**：仓管（WAREHOUSE）只能修改或删除**自己录入的**记录；管理员不受限；
+运营（OPERATIONS）没有 `RECORD_EDIT` / `RECORD_DELETE` 能力，根本进不来。
+
+由 `editable_record()` 在 `PUT` / `DELETE /api/records/<id>` 两条路径上统一实施。
+
+#### 这条规则曾经被静默关掉
+
+它原本的写法是：
+
+```python
+operator_id = current_operator_id()
+if operator_id is not None and row["completed_by_user_id"] != operator_id:
+    raise ApiError("只能修改或删除自己的录入记录", 403)
+```
+
+而 `current_operator_id()` **对所有角色都返回 `None`** —— 那是为了停用
+产品/供应商范围限制而做的**有意决定**（见该函数的注释）。
+于是 `operator_id is not None` 永远为假，**这个守卫从来没生效过**。
+
+**根因是两个无关的策略共用了一个 helper**：改「产品范围」策略时，
+「记录归属」策略被顺带关掉了。而且没有任何测试会发现——因为当时没有测试覆盖它。
+
+> **教训**：一个返回 `None` 表示「不限制」的辅助函数，不能被用来表达
+> 「这条记录属于谁」。前者是**策略开关**，后者是**数据判断**。
+> 现在归属检查直接读角色，不再经过 `current_operator_id()`。
+
+#### 为什么不能改成「重新启用 current_operator_id()」
+
+那会连带重启产品/供应商范围限制——影响面大得多，且与本次业务决定无关。
+归属检查直接读 `current_user()["role"]` 与 `["id"]`，只影响这一条策略。
+
+#### 归属数据的来源
+
+`trace_records.completed_by_user_id` 与 `batch_trace_records.completed_by_user_id`
+写入时用的是 `current_actor_id()`（**返回真实用户 id**），不是 `current_operator_id()`。
+所以归属数据一直是正确填充的——**只有校验那一环断了**。
+
+#### 无主记录的处理
+
+`completed_by_user_id` 为 `NULL` 的历史记录（早于该字段启用）视为**无主**，
+仓管不能改（否则等于把刚堵上的洞重新打开），管理员可以清理。
+
+#### 测试
+
+`tests/test_login_security.py` 之外单列 `tests/test_record_ownership.py`（9 项）。
+**这批测试已验证可证伪**：把守卫临时改回旧写法，其中 3 项会失败。
+
 ### 生产守卫
 
 `PTS_ENV=production` 时，启动阶段**直接抛 `RuntimeError` 拒绝启动**：
@@ -148,7 +197,7 @@ token 在登录与改密时重新生成。
 
 | 缺口 | 影响 | 状态 |
 | --- | --- | --- |
-| **记录归属权规则未实现** | 仓管之间可互相修改/删除录入记录（`editable_record()` 的归属检查是死代码） | **待业务确认**，见 `PRODUCT_RULES.md` §10 |
+| ✅ **记录归属权已实现** | 仓管只能改删自己的录入记录（2026-09-23 业务确认） | 见下 |
 | 范围授权表仍写入并回显但**不参与鉴权** | 管理员界面的「分配产品」无权限效果 | 保留为 API 兼容；见 `PERMISSION_MATRIX.md` D4 |
 | 鉴权分散在 handler 与 service 两层 | 审计时容易漏看 | 见 D5，提取器已覆盖 |
 
@@ -295,7 +344,6 @@ token 在登录与改密时重新生成。
 
 | 优先级 | 缺口 | 理由 |
 | --- | --- | --- |
-| **高** | 记录归属权规则未实现 | 已登录账号可改删他人记录 |
 | **高** | 审计链尾未外部锚定 | 有数据库完全控制权者可重算整条链 |
 | 中 | 限流依赖 `remote_addr` | 反向代理后所有请求同源，需可信代理头 |
 | 中 | 导出公式注入 | 打开导出的 Excel 可能执行公式 |

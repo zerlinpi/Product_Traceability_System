@@ -2,4 +2,4 @@
 # Raise it when you add tests (python tools/check_test_count.py --update).
 # Lowering it needs a reason in the commit message: deleting tests is not
 # how a failing build gets fixed.
-829
+838
