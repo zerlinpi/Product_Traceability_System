@@ -32,6 +32,7 @@ from traceability.codes import (
     parse_batch_payload,
 )
 from traceability.api.bluetooth import bluetooth_bp
+from traceability.api.product_families import product_families_bp
 from traceability.ble_collector import BluetoothCollectionError
 from traceability.db import get_db, initialize_database
 from traceability.auth import (
@@ -59,7 +60,6 @@ from traceability.serializers import (
     supplier_dict,
     part_type_dict,
     supplier_inventory_batch_dict,
-    product_family_dict,
     product_model_dict,
     product_code_batch_dict,
     machine_dict,
@@ -1988,76 +1988,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 "lingxing": lingxing_settings_block(database),
             }
         )
-
-    @app.get("/api/product-families")
-    def list_product_families():
-        operator_id = current_operator_id()
-        rows = get_db().execute(
-            """
-            SELECT pf.*,
-                   (SELECT COUNT(*) FROM product_models pm
-                    WHERE pm.product_family_id = pf.id) AS model_count
-            FROM product_families pf
-            WHERE (? IS NULL OR EXISTS(
-                SELECT 1
-                FROM product_models scoped_model
-                JOIN user_product_model_permissions permission
-                  ON permission.product_model_id = scoped_model.id
-                WHERE permission.user_id = ?
-                  AND scoped_model.product_family_id = pf.id
-            ))
-            ORDER BY pf.active DESC, pf.product_code COLLATE NOCASE
-            """,
-            (operator_id, operator_id),
-        ).fetchall()
-        return success([product_family_dict(row) for row in rows])
-
-    @app.post("/api/product-families")
-    def create_product_family():
-        require_admin()
-        payload = request.get_json(silent=True) or {}
-        product_code = normalize_entity_code(payload.get("productCode"), "产品分类编码")
-        name = clean_text(payload.get("name"), "产品分类名称", required=True, max_length=80)
-        description = clean_text(payload.get("description"), "产品分类说明", max_length=300)
-        timestamp = now_iso()
-        cursor = get_db().execute(
-            """
-            INSERT INTO product_families(
-                product_code, name, description, active, created_at, updated_at
-            ) VALUES (?, ?, ?, 1, ?, ?)
-            """,
-            (product_code, name, description, timestamp, timestamp),
-        )
-        row = get_db().execute(
-            "SELECT pf.*, 0 AS model_count FROM product_families pf WHERE id = ?",
-            (cursor.lastrowid,),
-        ).fetchone()
-        return success(product_family_dict(row), 201)
-
-    @app.put("/api/product-families/<int:family_id>")
-    def update_product_family(family_id: int):
-        require_admin()
-        payload = request.get_json(silent=True) or {}
-        database = get_db()
-        current = database.execute("SELECT * FROM product_families WHERE id = ?", (family_id,)).fetchone()
-        if not current:
-            raise ApiError("产品分类不存在", 404)
-        name = clean_text(payload.get("name", current["name"]), "产品分类名称", required=True, max_length=80)
-        description = clean_text(payload.get("description", current["description"]), "产品分类说明", max_length=300)
-        active = 1 if parse_bool(payload.get("active"), bool(current["active"])) else 0
-        database.execute(
-            "UPDATE product_families SET name = ?, description = ?, active = ?, updated_at = ? WHERE id = ?",
-            (name, description, active, now_iso(), family_id),
-        )
-        row = database.execute(
-            """
-            SELECT pf.*, (SELECT COUNT(*) FROM product_models pm
-                          WHERE pm.product_family_id = pf.id) AS model_count
-            FROM product_families pf WHERE pf.id = ?
-            """,
-            (family_id,),
-        ).fetchone()
-        return success(product_family_dict(row))
 
     @app.get("/api/product-models")
     def list_product_models():
@@ -8470,6 +8400,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     # visible without reading the whole factory. Each is a domain that no longer
     # needs to live inside create_app().
     app.register_blueprint(bluetooth_bp)
+    app.register_blueprint(product_families_bp)
 
     return app
 
