@@ -326,6 +326,44 @@ python -m pytest -q
 > 迁移测试当前覆盖「全新库 → v22」与「v11 → v22」两条路径，以及 v13→v14 的角色收敛。
 > **尚未**建立完整的逐级升级矩阵（12→22、13→22 … 18→22），属待补项。
 
+### 已知环境依赖：并发写测试
+
+有两项测试依赖 SQLite 在 **WAL 模式下的并发写入**：
+
+- `tests/test_batch_concurrency.py::test_concurrent_deductions_serialize_without_overselling`
+- `tests/test_system.py::test_two_final_writes_can_run_concurrently`
+
+若它们报 `sqlite3.OperationalError: attempt to write a readonly database`，
+**先确认是不是机器环境问题，而不是代码问题**。判定方法（不涉及本项目代码）：
+
+```python
+# 纯 sqlite3，多线程并发写同一个 WAL 库；健康时应为 4/4 成功
+import sqlite3, tempfile
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+db = Path(tempfile.mkdtemp()) / "t.db"
+c = sqlite3.connect(str(db), timeout=10, isolation_level=None)
+c.execute("PRAGMA journal_mode = WAL"); c.execute("CREATE TABLE t(a INTEGER)"); c.close()
+def w(i):
+    c = sqlite3.connect(str(db), timeout=10, isolation_level=None)
+    try:
+        c.execute("PRAGMA busy_timeout = 10000")
+        c.execute("BEGIN IMMEDIATE"); c.execute("INSERT INTO t VALUES (?)", (i,)); c.execute("COMMIT")
+        return "ok"
+    except Exception as e:
+        return type(e).__name__
+    finally:
+        c.close()
+with ThreadPoolExecutor(max_workers=4) as ex:
+    print(list(ex.map(w, range(4))))
+```
+
+若上面输出出现 `OperationalError`，而 `PRAGMA journal_mode = delete` 时 4/4 成功，
+说明**该机器的 WAL 并发已损坏**（与项目无关）。先重启；仍失败则检查杀毒软件
+对数据库目录与 `%TEMP%` 的实时扫描——WAL 依赖 `-shm` 共享内存映射文件，
+被锁就会返回 SQLITE_READONLY。**这也会拖慢整套测试**：每次并发写要等满
+`busy_timeout`（10 秒）才失败。
+
 ### 开发环境与 CI
 
 ```bash

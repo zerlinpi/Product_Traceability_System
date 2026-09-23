@@ -36,6 +36,7 @@ from traceability.api.product_families import product_families_bp
 from traceability.api.part_types import part_types_bp
 from traceability.api.machines import machines_bp
 from traceability.api.suppliers import suppliers_bp
+from traceability.api.product_models import product_models_bp
 from traceability.ble_collector import BluetoothCollectionError
 from traceability.db import get_db, initialize_database
 from traceability.auth import (
@@ -62,7 +63,6 @@ from traceability.serializers import (
     _trace_plan_slot_dict,
     part_type_dict,
     supplier_inventory_batch_dict,
-    product_model_dict,
     product_code_batch_dict,
     machine_dict,
     part_label_dict,
@@ -70,7 +70,6 @@ from traceability.serializers import (
     batch_trace_record_dict,
 )
 from traceability.validators import (
-    clean_ble_uuid,
     clean_text,
     coerce_export_number,
     detect_product_image_type,
@@ -1919,218 +1918,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 "lingxing": lingxing_settings_block(database),
             }
         )
-
-    @app.get("/api/product-models")
-    def list_product_models():
-        family_id = request.args.get("familyId", type=int)
-        active_only = parse_bool(request.args.get("activeOnly"), False)
-        operator_id = current_operator_id()
-        rows = get_db().execute(
-            """
-            SELECT pm.*, pf.product_code AS product_family_code,
-                   pf.name AS product_family_name,
-                   (SELECT COUNT(*) FROM machines m
-                    WHERE m.product_model_id = pm.id) AS finished_product_count,
-                   (SELECT COUNT(*) FROM trace_plans tp
-                    WHERE tp.product_model_id = pm.id) AS trace_plan_count
-            FROM product_models pm
-            JOIN product_families pf ON pf.id = pm.product_family_id
-            WHERE (? IS NULL OR pm.product_family_id = ?)
-              AND (? = 0 OR (pm.active = 1 AND pf.active = 1))
-              AND (? IS NULL OR EXISTS(
-                    SELECT 1 FROM user_product_model_permissions permission
-                    WHERE permission.user_id = ? AND permission.product_model_id = pm.id
-              ))
-            ORDER BY pf.product_code COLLATE NOCASE, pm.active DESC, pm.model_code COLLATE NOCASE
-            """,
-            (family_id, family_id, 1 if active_only else 0, operator_id, operator_id),
-        ).fetchall()
-        return success([product_model_dict(row) for row in rows])
-
-    @app.post("/api/product-models")
-    def create_product_model():
-        require_admin()
-        payload = request.get_json(silent=True) or {}
-        try:
-            family_id = int(payload.get("productFamilyId"))
-        except (TypeError, ValueError):
-            raise ApiError("请选择产品分类") from None
-        database = get_db()
-        family = database.execute(
-            "SELECT id FROM product_families WHERE id = ? AND active = 1", (family_id,)
-        ).fetchone()
-        if not family:
-            raise ApiError("产品分类不存在或已停用")
-        model_code = normalize_entity_code(payload.get("modelCode"), "产品型号编码")
-        name = clean_text(payload.get("name"), "产品型号名称", required=True, max_length=100)
-        serial_prefix = clean_text(payload.get("serialPrefix"), "序列号前缀", max_length=40).upper()
-        identity_source = str(payload.get("identitySource") or "SCANNER").strip().upper()
-        if identity_source not in {"BLUETOOTH", "SCANNER", "MANUAL"}:
-            raise ApiError("识别方式只能是蓝牙、扫码枪或手工录入")
-        bluetooth_prefix = clean_text(
-            payload.get("bluetoothNamePrefix"), "蓝牙名称前缀", max_length=40
-        ).upper()
-        if identity_source == "BLUETOOTH" and not bluetooth_prefix:
-            bluetooth_prefix = serial_prefix or model_code
-        bluetooth_service_uuid = clean_ble_uuid(
-            payload.get("bluetoothServiceUuid"), "蓝牙服务 UUID"
-        )
-        bluetooth_notify_uuid = clean_ble_uuid(
-            payload.get("bluetoothNotifyUuid"),
-            "蓝牙通知 UUID",
-            required=identity_source == "BLUETOOTH",
-        )
-        timestamp = now_iso()
-        cursor = database.execute(
-            """
-            INSERT INTO product_models(
-                product_family_id, model_code, name, serial_prefix,
-                identity_source, bluetooth_name_prefix,
-                bluetooth_service_uuid, bluetooth_notify_uuid,
-                active, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-            """,
-            (
-                family_id, model_code, name, serial_prefix,
-                identity_source, bluetooth_prefix,
-                bluetooth_service_uuid, bluetooth_notify_uuid,
-                timestamp, timestamp,
-            ),
-        )
-        row = database.execute(
-            """
-            SELECT pm.*, pf.product_code AS product_family_code,
-                   pf.name AS product_family_name, 0 AS finished_product_count,
-                   0 AS trace_plan_count
-            FROM product_models pm JOIN product_families pf ON pf.id = pm.product_family_id
-            WHERE pm.id = ?
-            """,
-            (cursor.lastrowid,),
-        ).fetchone()
-        return success(product_model_dict(row), 201)
-
-    @app.put("/api/product-models/<int:model_id>")
-    def update_product_model(model_id: int):
-        require_admin()
-        payload = request.get_json(silent=True) or {}
-        database = get_db()
-        current = database.execute("SELECT * FROM product_models WHERE id = ?", (model_id,)).fetchone()
-        if not current:
-            raise ApiError("产品型号不存在", 404)
-        try:
-            family_id = int(payload.get("productFamilyId", current["product_family_id"]))
-        except (TypeError, ValueError):
-            raise ApiError("请选择产品分类") from None
-        if not database.execute("SELECT id FROM product_families WHERE id = ?", (family_id,)).fetchone():
-            raise ApiError("产品分类不存在")
-        name = clean_text(payload.get("name", current["name"]), "产品型号名称", required=True, max_length=100)
-        serial_prefix = clean_text(
-            payload.get("serialPrefix", current["serial_prefix"]), "序列号前缀", max_length=40
-        ).upper()
-        identity_source = str(payload.get("identitySource", current["identity_source"])).strip().upper()
-        if identity_source not in {"BLUETOOTH", "SCANNER", "MANUAL"}:
-            raise ApiError("识别方式只能是蓝牙、扫码枪或手工录入")
-        bluetooth_prefix = clean_text(
-            payload.get("bluetoothNamePrefix", current["bluetooth_name_prefix"]),
-            "蓝牙名称前缀",
-            max_length=40,
-        ).upper()
-        if identity_source == "BLUETOOTH" and not bluetooth_prefix:
-            bluetooth_prefix = serial_prefix or current["model_code"]
-        bluetooth_service_uuid = clean_ble_uuid(
-            payload.get("bluetoothServiceUuid", current["bluetooth_service_uuid"]),
-            "蓝牙服务 UUID",
-        )
-        bluetooth_notify_uuid = clean_ble_uuid(
-            payload.get("bluetoothNotifyUuid", current["bluetooth_notify_uuid"]),
-            "蓝牙通知 UUID",
-            required=identity_source == "BLUETOOTH",
-        )
-        active = 1 if parse_bool(payload.get("active"), bool(current["active"])) else 0
-        database.execute(
-            """
-            UPDATE product_models SET product_family_id = ?, name = ?, serial_prefix = ?,
-                identity_source = ?, bluetooth_name_prefix = ?,
-                bluetooth_service_uuid = ?, bluetooth_notify_uuid = ?,
-                active = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                family_id, name, serial_prefix, identity_source,
-                bluetooth_prefix, bluetooth_service_uuid, bluetooth_notify_uuid,
-                active, now_iso(), model_id,
-            ),
-        )
-        row = database.execute(
-            """
-            SELECT pm.*, pf.product_code AS product_family_code,
-                   pf.name AS product_family_name,
-                   (SELECT COUNT(*) FROM machines m
-                    WHERE m.product_model_id = pm.id) AS finished_product_count,
-                   (SELECT COUNT(*) FROM trace_plans tp
-                    WHERE tp.product_model_id = pm.id) AS trace_plan_count
-            FROM product_models pm JOIN product_families pf ON pf.id = pm.product_family_id
-            WHERE pm.id = ?
-            """,
-            (model_id,),
-        ).fetchone()
-        return success(product_model_dict(row))
-
-    @app.delete("/api/product-models/<int:model_id>")
-    def delete_product_model(model_id: int):
-        require_operations()
-        database = get_db()
-        product = database.execute(
-            "SELECT * FROM product_models WHERE id = ?", (model_id,)
-        ).fetchone()
-        if not product:
-            raise ApiError("产品型号不存在", 404)
-        actor = current_user()
-        actor_role = actor["role"] if actor else ""
-        if actor_role != "ADMIN" and product["created_by_user_id"] != current_actor_id():
-            raise ApiError("只能删除自己创建的产品", 403)
-        # Only "unused" products may be deleted: no generated QR code sets/batches
-        # and no finished-product (machine) or trace records, to preserve
-        # traceability of anything already produced.
-        code_set_count = database.execute(
-            "SELECT COUNT(*) AS n FROM product_code_sets WHERE product_model_id = ?",
-            (model_id,),
-        ).fetchone()["n"]
-        code_batch_count = database.execute(
-            "SELECT COUNT(*) AS n FROM product_code_batches WHERE product_model_id = ?",
-            (model_id,),
-        ).fetchone()["n"]
-        machine_count = database.execute(
-            "SELECT COUNT(*) AS n FROM machines WHERE product_model_id = ?",
-            (model_id,),
-        ).fetchone()["n"]
-        if code_set_count or code_batch_count or machine_count:
-            raise ApiError("该产品已生成二维码或存在生产记录，无法删除；请先停用产品", 409)
-        database.execute("BEGIN IMMEDIATE")
-        try:
-            record_audit_event(
-                database,
-                "PRODUCT_MODEL_DELETED",
-                "PRODUCT_MODEL",
-                product["model_code"],
-                related_object_code=product["name"],
-                payload={"productModelId": model_id},
-            )
-            # trace_plans reference product_models with ON DELETE RESTRICT, so remove
-            # the BOM plans (their slots cascade) before deleting the model itself.
-            # user_product_model_permissions cascade automatically.
-            database.execute(
-                "DELETE FROM trace_plans WHERE product_model_id = ?", (model_id,)
-            )
-            database.execute("DELETE FROM product_models WHERE id = ?", (model_id,))
-            database.commit()
-        except sqlite3.IntegrityError as error:
-            database.rollback()
-            raise ApiError("该产品仍被其他数据引用，无法删除", 409) from error
-        except Exception:
-            database.rollback()
-            raise
-        return success({"id": model_id, "modelCode": product["model_code"]})
 
     def product_image_dir() -> Path:
         """Directory holding uploaded product pictures (next to the database)."""
@@ -5289,9 +5076,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         # unrelated policies were sharing one helper, and changing the scoping
         # policy silently switched this one off. It now reads the role directly.
         actor = current_user()
-        if actor and str(actor["role"]) == ROLE_WAREHOUSE:
-            if row["completed_by_user_id"] != actor["id"]:
-                raise ApiError("只能修改或删除自己的录入记录", 403)
+        is_warehouse_operator = bool(actor) and str(actor["role"]) == ROLE_WAREHOUSE
+        if is_warehouse_operator and row["completed_by_user_id"] != actor["id"]:
+            raise ApiError("只能修改或删除自己的录入记录", 403)
         require_product_model_access(row["product_model_id"])
         return row
 
@@ -7901,6 +7688,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.register_blueprint(part_types_bp)
     app.register_blueprint(machines_bp)
     app.register_blueprint(suppliers_bp)
+    app.register_blueprint(product_models_bp)
 
     return app
 

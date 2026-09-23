@@ -244,12 +244,23 @@
 | 1a | `errors.py` + `validators.py`（错误类型与纯校验函数） | ✅ 已完成 |
 | 1b | `responses.py`（信封与安全头） | ✅ 已完成 |
 | 1c | `serializers.py`（12 个行→JSON 序列化函数） | ✅ 已完成 |
-| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 🔄 进行中（蓝牙域已完成） |
+| 1d | `audit_events.py`（审计写入，蓝图必需） | ✅ 已完成 |
+| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 🔄 进行中（5 个域已完成） |
 | 3 | 领域逻辑（库存扣减、追溯、扫码状态机）外移 | 待做 |
 
-阶段 1 后 `app.py` 约 8608 行；蓝牙域抽出后约 8483 行。
-每个阶段都由全量测试（829 项）与 `tools/extract_routes.py --check`
-（路由与权限文档一致）共同守护。
+已迁出的领域（共 17 条路由）：
+
+| 蓝图 | 路由数 | 备注 |
+| --- | --- | --- |
+| `api/bluetooth.py` | 3 | 首个，用于验证模式 |
+| `api/product_families.py` | 3 | 零额外抽取（阶段 1 红利） |
+| `api/part_types.py` | 3 | 需先抽 `audit_events.py` |
+| `api/machines.py` | 3 | 路由在源码中不连续，仍归一处 |
+| `api/suppliers.py` | 4 | 详情视图是最重的端点 |
+| `api/product_models.py` | 4 | 顺带修掉硬编码 `"ADMIN"` 字面量 |
+
+`app.py`：8949 → 约 7700 行。每个阶段都由全量测试与
+`tools/extract_routes.py --check`（路由与权限文档一致）共同守护。
 
 ### 10.4 蓝图与权限门禁
 
