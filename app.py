@@ -33,6 +33,7 @@ from traceability.codes import (
 )
 from traceability.api.bluetooth import bluetooth_bp
 from traceability.api.product_families import product_families_bp
+from traceability.api.part_types import part_types_bp
 from traceability.ble_collector import BluetoothCollectionError
 from traceability.db import get_db, initialize_database
 from traceability.auth import (
@@ -49,7 +50,7 @@ from traceability.auth import (
     require_supplier_access,
     require_warehouse,
 )
-from traceability.audit_chain import link_event
+from traceability.audit_events import record_audit_event
 from traceability.capabilities import Capability
 from traceability.errors import ApiError
 from traceability.login_guard import LoginPolicy
@@ -342,77 +343,6 @@ def require_quality_release(database: sqlite3.Connection) -> bool:
     return parse_bool(row["setting_value"] if row else "0")
 
 
-def record_audit_event(
-    database: sqlite3.Connection,
-    event_type: str,
-    object_type: str,
-    object_code: str,
-    *,
-    related_object_code: str = "",
-    station_id: str = "",
-    station_name: str = "",
-    operator_name: str = "",
-    reason: str = "",
-    payload: dict[str, Any] | None = None,
-    occurred_at: str | None = None,
-) -> None:
-    actor_user_id = current_actor_id()
-    if actor_user_id is not None:
-        operator_name = current_actor_name(operator_name)
-    payload_json = json.dumps(payload or {}, ensure_ascii=False, separators=(",", ":"))
-    timestamp = occurred_at or now_iso()
-    for attempt in range(8):
-        try:
-            event_id = new_event_id()
-            # The chain is computed from the values about to be written, so the
-            # row can be inserted complete in one statement. See
-            # traceability/audit_chain.py for why event_id and not id.
-            prev_hash, event_hash = link_event(
-                database,
-                {
-                    "event_id": event_id,
-                    "event_type": event_type,
-                    "object_type": object_type,
-                    "object_code": object_code,
-                    "related_object_code": related_object_code,
-                    "station_id": station_id,
-                    "station_name": station_name,
-                    "operator_name": operator_name,
-                    "actor_user_id": actor_user_id,
-                    "reason": reason,
-                    "payload_json": payload_json,
-                    "occurred_at": timestamp,
-                },
-            )
-            database.execute(
-                """
-                INSERT INTO audit_events(
-                    event_id, event_type, object_type, object_code, related_object_code,
-                    station_id, station_name, operator_name, actor_user_id,
-                    reason, payload_json, occurred_at, prev_hash, event_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event_id,
-                    event_type,
-                    object_type,
-                    object_code,
-                    related_object_code,
-                    station_id,
-                    station_name,
-                    operator_name,
-                    actor_user_id,
-                    reason,
-                    payload_json,
-                    timestamp,
-                    prev_hash,
-                    event_hash,
-                ),
-            )
-            return
-        except sqlite3.IntegrityError as error:
-            if "audit_events.event_id" not in str(error) or attempt == 7:
-                raise
 
 
 
@@ -4160,139 +4090,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 "usedInProducts": list(used_in_products.values()),
             }
         )
-
-    @app.get("/api/part-types")
-    def list_part_types():
-        operator_id = current_operator_id()
-        rows = get_db().execute(
-            """
-            SELECT pt.*, s.supplier_code, s.name AS supplier_name,
-                   COUNT(sib.id) AS batch_count,
-                   COALESCE(SUM(sib.quantity_available), 0) AS quantity_available
-            FROM part_types pt JOIN suppliers s ON s.id = pt.supplier_id
-            LEFT JOIN supplier_inventory_batches sib ON sib.part_type_id = pt.id
-            WHERE (? IS NULL OR EXISTS(
-                SELECT 1 FROM user_supplier_permissions permission
-                WHERE permission.user_id = ? AND permission.supplier_id = pt.supplier_id
-            ))
-            GROUP BY pt.id
-            ORDER BY pt.created_at DESC, pt.id DESC
-            """,
-            (operator_id, operator_id),
-        ).fetchall()
-        return success([part_type_dict(row) for row in rows])
-
-    @app.post("/api/part-types")
-    def create_part_type():
-        require_admin()
-        payload = request.get_json(silent=True) or {}
-        part_code = normalize_entity_code(payload.get("partCode"), "部件编码")
-        name = clean_text(payload.get("name"), "部件名称", required=True, max_length=100)
-        category_code = normalize_entity_code(
-            payload.get("categoryCode") or part_code, "部件分类编码"
-        )
-        category_name = clean_text(
-            payload.get("categoryName") or name, "部件分类名称", required=True, max_length=100
-        )
-        specification = clean_text(payload.get("specification"), "规格型号", max_length=150)
-        try:
-            minimum_stock = int(payload.get("minimumStock", 0))
-        except (TypeError, ValueError) as error:
-            raise ApiError("安全库存必须是整数") from error
-        if not 0 <= minimum_stock <= 10_000_000:
-            raise ApiError("安全库存需在 0-10000000 之间")
-        try:
-            supplier_id = int(payload.get("supplierId"))
-        except (TypeError, ValueError):
-            raise ApiError("请选择供应商") from None
-        database = get_db()
-        supplier = database.execute("SELECT id FROM suppliers WHERE id = ?", (supplier_id,)).fetchone()
-        if not supplier:
-            raise ApiError("供应商不存在")
-        existing_category = database.execute(
-            "SELECT category_name FROM part_types WHERE category_code = ? LIMIT 1",
-            (category_code,),
-        ).fetchone()
-        if existing_category:
-            category_name = existing_category["category_name"]
-        timestamp = app.config["NOW_PROVIDER"]()
-        cursor = database.execute(
-            """
-            INSERT INTO part_types(
-                part_code, name, category_code, category_name,
-                specification, minimum_stock, supplier_id, active, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-            """,
-            (
-                part_code, name, category_code, category_name,
-                specification, minimum_stock, supplier_id, timestamp, timestamp,
-            ),
-        )
-        row = database.execute(
-            """
-            SELECT pt.*, s.supplier_code, s.name AS supplier_name
-            FROM part_types pt JOIN suppliers s ON s.id = pt.supplier_id WHERE pt.id = ?
-            """,
-            (cursor.lastrowid,),
-        ).fetchone()
-        return success(part_type_dict(row), 201)
-
-    @app.put("/api/part-types/<int:part_type_id>")
-    def update_part_type(part_type_id: int):
-        require_admin()
-        database = get_db()
-        current = database.execute(
-            "SELECT * FROM part_types WHERE id = ?", (part_type_id,)
-        ).fetchone()
-        if not current:
-            raise ApiError("供应部件不存在", 404)
-        payload = request.get_json(silent=True) or {}
-        part_code = normalize_entity_code(
-            payload.get("partCode", current["part_code"]), "部件编码"
-        )
-        name = clean_text(
-            payload.get("name", current["name"]), "部件名称", required=True, max_length=100
-        )
-        specification = clean_text(
-            payload.get("specification", current["specification"]), "规格型号", max_length=150
-        )
-        try:
-            minimum_stock = int(payload.get("minimumStock", current["minimum_stock"]))
-        except (TypeError, ValueError) as error:
-            raise ApiError("安全库存必须是整数") from error
-        if not 0 <= minimum_stock <= 10_000_000:
-            raise ApiError("安全库存需在 0-10000000 之间")
-        active = parse_bool(payload.get("active"), bool(current["active"]))
-        timestamp = app.config["NOW_PROVIDER"]()
-        database.execute(
-            """
-            UPDATE part_types
-            SET part_code = ?, name = ?, category_code = ?, category_name = ?,
-                specification = ?, minimum_stock = ?, active = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (
-                part_code, name, part_code, name, specification, minimum_stock,
-                int(active), timestamp, part_type_id,
-            ),
-        )
-        record_audit_event(
-            database,
-            "SUPPLIER_PART_UPDATED",
-            "PART_TYPE",
-            part_code,
-            payload={"name": name, "active": active, "minimumStock": minimum_stock},
-            occurred_at=timestamp,
-        )
-        row = database.execute(
-            """
-            SELECT pt.*, s.supplier_code, s.name AS supplier_name
-            FROM part_types pt JOIN suppliers s ON s.id = pt.supplier_id
-            WHERE pt.id = ?
-            """,
-            (part_type_id,),
-        ).fetchone()
-        return success(part_type_dict(row))
 
     @app.get("/api/supplier-inventory-batches")
     def list_supplier_inventory_batches():
@@ -8401,6 +8198,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     # needs to live inside create_app().
     app.register_blueprint(bluetooth_bp)
     app.register_blueprint(product_families_bp)
+    app.register_blueprint(part_types_bp)
 
     return app
 
