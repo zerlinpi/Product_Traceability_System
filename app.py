@@ -34,6 +34,7 @@ from traceability.codes import (
 from traceability.api.bluetooth import bluetooth_bp
 from traceability.api.product_families import product_families_bp
 from traceability.api.part_types import part_types_bp
+from traceability.api.machines import machines_bp
 from traceability.ble_collector import BluetoothCollectionError
 from traceability.db import get_db, initialize_database
 from traceability.auth import (
@@ -4492,123 +4493,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         ).fetchone()
         return success(trace_plan_dict(database, row), 201)
 
-    @app.get("/api/machines")
-    def list_machines():
-        search = clean_text(request.args.get("search"), "搜索内容", max_length=100)
-        wildcard = f"%{search}%"
-        operator_id = current_operator_id()
-        rows = get_db().execute(
-            """
-            SELECT m.*, tp.version AS trace_plan_version, tp.name AS trace_plan_name,
-                   pm.name AS product_model_name, pf.id AS product_family_id,
-                   pf.product_code AS product_family_code, pf.name AS product_family_name,
-                   EXISTS(SELECT 1 FROM trace_records tr WHERE tr.machine_id = m.id) AS traced,
-                   (SELECT ss.station_name FROM scan_sessions ss WHERE ss.machine_id = m.id LIMIT 1) AS reserved_station
-            FROM machines m
-            LEFT JOIN trace_plans tp ON tp.id = m.trace_plan_id
-            LEFT JOIN product_models pm ON pm.id = m.product_model_id
-            LEFT JOIN product_families pf ON pf.id = pm.product_family_id
-            WHERE (? = '' OR m.sn LIKE ? OR m.model LIKE ? OR m.identification_code LIKE ?)
-              AND (? IS NULL OR EXISTS(
-                    SELECT 1 FROM user_product_model_permissions permission
-                    WHERE permission.user_id = ? AND permission.product_model_id = m.product_model_id
-              ))
-            ORDER BY m.created_at DESC, m.id DESC LIMIT 500
-            """,
-            (search, wildcard, wildcard, wildcard, operator_id, operator_id),
-        ).fetchall()
-        return success([machine_dict(row) for row in rows])
-
-    @app.post("/api/machines")
-    def create_machine():
-        require_admin()
-        payload = request.get_json(silent=True) or {}
-        sn = normalize_sn(payload.get("sn"))
-        database = get_db()
-        product_model = None
-        raw_model_id = payload.get("productModelId")
-        if raw_model_id not in {None, ""}:
-            try:
-                product_model_id = int(raw_model_id)
-            except (TypeError, ValueError):
-                raise ApiError("请选择产品型号") from None
-            product_model = database.execute(
-                "SELECT * FROM product_models WHERE id = ? AND active = 1",
-                (product_model_id,),
-            ).fetchone()
-        else:
-            model_input = clean_text(payload.get("model"), "产品型号", required=True, max_length=80)
-            product_model = database.execute(
-                "SELECT * FROM product_models WHERE model_code = ? COLLATE NOCASE AND active = 1",
-                (model_input,),
-            ).fetchone()
-        if not product_model:
-            raise ApiError("产品型号不存在或已停用")
-        product_model_id = product_model["id"]
-        require_product_model_access(product_model_id)
-        model = product_model["model_code"]
-        serial_prefix = str(product_model["serial_prefix"] or "").strip().upper()
-        if serial_prefix and not sn.startswith(serial_prefix):
-            raise ApiError(f"成品 SN 必须以 {serial_prefix} 开头，不能登记到型号 {model}")
-        production_date = clean_text(payload.get("productionDate"), "生产日期", max_length=8)
-        if production_date and (len(production_date) != 8 or not production_date.isdigit()):
-            raise ApiError("生产日期格式需为 YYYYMMDD")
-        active_plan = database.execute(
-            "SELECT id FROM trace_plans WHERE product_model_id = ? AND status = 'ACTIVE'",
-            (product_model_id,),
-        ).fetchone()
-        timestamp = now_iso()
-        database.execute("BEGIN IMMEDIATE")
-        try:
-            cursor = database.execute(
-                """
-                INSERT INTO machines(
-                    sn, model, product_model_id, production_date,
-                    trace_plan_id, identification_code, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    sn,
-                    model,
-                    product_model_id,
-                    production_date,
-                    active_plan["id"] if active_plan else None,
-                    machine_identification_code(sn),
-                    timestamp,
-                ),
-            )
-            record_audit_event(
-                database,
-                "MACHINE_COMMISSIONED",
-                "MACHINE",
-                sn,
-                payload={
-                    "model": model,
-                    "productionDate": production_date,
-                    "tracePlanId": active_plan["id"] if active_plan else None,
-                },
-                occurred_at=timestamp,
-            )
-            database.commit()
-        except Exception:
-            database.rollback()
-            raise
-        row = database.execute(
-            """
-            SELECT m.*, tp.version AS trace_plan_version, tp.name AS trace_plan_name,
-                   pm.name AS product_model_name, pf.id AS product_family_id,
-                   pf.product_code AS product_family_code, pf.name AS product_family_name,
-                   0 AS traced, NULL AS reserved_station
-            FROM machines m
-            LEFT JOIN trace_plans tp ON tp.id = m.trace_plan_id
-            LEFT JOIN product_models pm ON pm.id = m.product_model_id
-            LEFT JOIN product_families pf ON pf.id = pm.product_family_id
-            WHERE m.id = ?
-            """,
-            (cursor.lastrowid,),
-        ).fetchone()
-        return success(machine_dict(row), 201)
-
     @app.get("/api/part-label-batches")
     def list_part_label_batches():
         search = clean_text(request.args.get("search"), "搜索内容", max_length=100)
@@ -4989,20 +4873,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             (label_id,),
         ).fetchone()
         return success(part_label_dict(row))
-
-    @app.get("/api/machines/<int:machine_id>/qr")
-    def machine_qr(machine_id: int):
-        require_capability(Capability.TRACE_VIEW)
-        row = get_db().execute(
-            "SELECT identification_code, product_model_id FROM machines WHERE id = ?",
-            (machine_id,),
-        ).fetchone()
-        if not row:
-            raise ApiError("成品不存在", 404)
-        if row["product_model_id"] is None:
-            raise ApiError("该成品尚未关联产品型号", 409)
-        require_product_model_access(row["product_model_id"])
-        return Response(make_qr_svg(row["identification_code"]), mimetype="image/svg+xml")
 
     @app.get("/api/part-labels/<int:label_id>/qr")
     def part_label_qr(label_id: int):
@@ -8199,6 +8069,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.register_blueprint(bluetooth_bp)
     app.register_blueprint(product_families_bp)
     app.register_blueprint(part_types_bp)
+    app.register_blueprint(machines_bp)
 
     return app
 
