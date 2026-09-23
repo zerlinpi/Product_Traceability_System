@@ -5,12 +5,23 @@ import contextlib
 import importlib.util
 import json
 import re
+import threading
 from dataclasses import asdict, dataclass
 
 
 V2_NAME_PREFIX = "TW-04"
 V2_NOTIFY_UUID = "0000fff1-0000-1000-8000-00805f9b34fb"
 SN_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9_-]{3,63}$")
+
+# A Bluetooth adapter can only run one discovery/read at a time. Two concurrent
+# requests would fight over the radio and produce either a spurious failure or a
+# device attributed to the wrong workstation, so the endpoints take this
+# non-blockingly and answer 409 instead of queueing — a scan gun operator should
+# be told to retry, not left waiting behind an unrelated read.
+#
+# It lives here rather than in app.py because it guards the radio, not the HTTP
+# layer: anything that talks to a device must take it.
+BLUETOOTH_OPERATION_LOCK = threading.Lock()
 
 
 class BluetoothCollectionError(RuntimeError):

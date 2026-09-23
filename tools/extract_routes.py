@@ -40,15 +40,40 @@ from traceability.capabilities import (  # noqa: E402
 
 # Routes are registered in more than one module. ``app.py`` holds the bulk;
 # ``traceability/auth.py`` registers the authentication and user-management
-# routes inside ``initialize_auth()``. Scanning only app.py silently under-counts
-# the API surface (and hides the auth routes from the permission matrix).
+# routes inside ``initialize_auth()``; the rest live in blueprint modules under
+# ``traceability/api/``. Scanning only app.py silently under-counts the API
+# surface (and hides those routes from the permission matrix).
+#
+# The blueprint directory is globbed rather than listed so a new blueprint is
+# picked up automatically — a hand-maintained list is exactly the thing that
+# goes stale and makes this gate lie.
+BLUEPRINT_DIR = ROOT / "traceability" / "api"
 SOURCES: tuple[Path, ...] = (
     ROOT / "app.py",
     ROOT / "traceability" / "auth.py",
+) + tuple(sorted(BLUEPRINT_DIR.glob("*.py")))
+
+# A route is declared either on the Flask app inside ``create_app()`` (4-space
+# indent) or on a blueprint at module level (0 indent). The decorator's receiver
+# is therefore not fixed, and neither is the indentation.
+ROUTE_RE = re.compile(
+    r'^(?P<indent> *)@(?P<receiver>\w+)\.'
+    r"(?P<method>get|post|put|delete|patch|route)\((?P<args>.*)\)\s*$"
 )
 
-ROUTE_RE = re.compile(r'^    @app\.(?P<method>get|post|put|delete|patch|route)\((?P<args>.*)\)\s*$')
-DEF_RE = re.compile(r"^    def (?P<name>\w+)\(")
+
+def _def_re(indent: int) -> re.Pattern[str]:
+    """Match ``def`` at exactly ``indent`` spaces.
+
+    The call graph is built from the functions declared *alongside* the routes —
+    create_app's nested helpers, or a blueprint module's top-level ones. Anything
+    deeper is nested inside a route body, and anything shallower is a different
+    layer: including app.py's module-level helpers made the service column list
+    every helper a route touches (record_audit_event, fetch_records, ...) and
+    changed the write detection for unrelated routes. Scoping to the route's own
+    indent keeps the graph to the layer that actually carries the guards.
+    """
+    return re.compile(rf"^ {{{indent}}}def (?P<name>\w+)\(")
 CALL_RE = re.compile(r"\b(?P<name>[a-z_][a-z0-9_]*)\s*\(")
 CAPABILITY_CALL_RE = re.compile(r"require_capability\(\s*Capability\.(?P<name>\w+)")
 
@@ -96,11 +121,16 @@ WRITE_RE = re.compile(r"BEGIN IMMEDIATE|INSERT INTO|UPDATE \w+ SET|DELETE FROM")
 READ_METHODS = {"GET"}
 
 
-def _blocks(lines: list[str]) -> dict[str, tuple[int, int]]:
-    """Map nested function name -> (start, end) line index inside create_app()."""
+def _blocks(lines: list[str], indent: int) -> dict[str, tuple[int, int]]:
+    """Map function name -> (start, end) line index for one declaration layer.
+
+    ``indent`` selects the layer: 4 for create_app()'s nested helpers, 0 for a
+    blueprint module's top-level functions.
+    """
+    pattern = _def_re(indent)
     starts: list[tuple[int, str]] = []
     for index, line in enumerate(lines):
-        match = DEF_RE.match(line)
+        match = pattern.match(line)
         if match:
             starts.append((index, match.group("name")))
     blocks: dict[str, tuple[int, int]] = {}
@@ -152,17 +182,22 @@ def extract() -> list[dict[str, object]]:
 
 def _extract_file(source: Path) -> list[dict[str, object]]:
     lines = source.read_text(encoding="utf-8").splitlines()
-    blocks = _blocks(lines)
-    known = set(blocks)
+    # Blocks are per declaration layer, resolved lazily from each route's own
+    # indentation, so one file can hold both module-level helpers and nested
+    # ones without either leaking into the other's call graph.
+    blocks_by_indent: dict[int, dict[str, tuple[int, int]]] = {}
     routes: list[dict[str, object]] = []
     for index, line in enumerate(lines):
         route = ROUTE_RE.match(line)
         if not route:
             continue
+        indent = len(route.group("indent"))
+        blocks = blocks_by_indent.setdefault(indent, _blocks(lines, indent))
+        known = set(blocks)
         args = route.group("args")
         path_match = re.match(r'\s*["\']([^"\']+)["\']', args)
         path = path_match.group(1) if path_match else args.strip()
-        definition = DEF_RE.match(lines[index + 1]) if index + 1 < len(lines) else None
+        definition = _def_re(indent).match(lines[index + 1]) if index + 1 < len(lines) else None
         if not definition:
             continue
         handler = definition.group("name")

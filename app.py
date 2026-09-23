@@ -6,7 +6,6 @@ import json
 import re
 import secrets
 import sqlite3
-import threading
 from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -32,12 +31,8 @@ from traceability.codes import (
     normalize_station_id,
     parse_batch_payload,
 )
-from traceability.ble_collector import (
-    BluetoothCollectionError,
-    discover_v2_devices,
-    is_bluetooth_runtime_available,
-    read_v2_identity,
-)
+from traceability.api.bluetooth import bluetooth_bp
+from traceability.ble_collector import BluetoothCollectionError
 from traceability.db import get_db, initialize_database
 from traceability.auth import (
     current_actor_id,
@@ -127,7 +122,6 @@ MAX_REQUIRED_PARTS = 20
 # ``required_part_count`` system setting, which has been removed.
 DEFAULT_GENERIC_PART_COUNT = 2
 SESSION_TIMEOUT_HOURS = 8
-BLUETOOTH_OPERATION_LOCK = threading.Lock()
 DEFAULT_SECRET_KEY = "pts-local-development-key-change-before-server-deployment"
 DEFAULT_BOOTSTRAP_PASSWORD = "Admin@12345"
 EXAMPLE_SECRET_KEY = "replace-with-a-random-string-of-at-least-32-characters"
@@ -1532,131 +1526,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.get("/api/health")
     def health():
         return success({"status": "ok", "time": now_iso()})
-
-    @app.get("/api/bluetooth/status")
-    def bluetooth_status():
-        operator_id = current_operator_id()
-        rows = get_db().execute(
-            """
-            SELECT pm.*, pf.product_code AS product_family_code,
-                   pf.name AS product_family_name, 0 AS finished_product_count,
-                   0 AS trace_plan_count
-            FROM product_models pm
-            JOIN product_families pf ON pf.id = pm.product_family_id
-            WHERE pm.active = 1 AND pf.active = 1
-              AND pm.identity_source = 'BLUETOOTH'
-              AND (? IS NULL OR EXISTS(
-                    SELECT 1 FROM user_product_model_permissions permission
-                    WHERE permission.user_id = ? AND permission.product_model_id = pm.id
-              ))
-            ORDER BY pm.model_code
-            """,
-            (operator_id, operator_id),
-        ).fetchall()
-        models = [product_model_dict(row) for row in rows]
-        first = models[0] if models else {}
-        return success(
-            {
-                "available": is_bluetooth_runtime_available(),
-                "models": models,
-                "namePrefix": first.get("bluetoothNamePrefix", ""),
-                "serviceUuid": first.get("bluetoothServiceUuid", ""),
-                "notifyUuid": first.get("bluetoothNotifyUuid", ""),
-            }
-        )
-
-    @app.post("/api/bluetooth/discover")
-    def bluetooth_discover():
-        operator_id = current_operator_id()
-        prefixes = [
-            row["bluetooth_name_prefix"]
-            for row in get_db().execute(
-                """
-                SELECT pm.bluetooth_name_prefix
-                FROM product_models pm JOIN product_families pf ON pf.id = pm.product_family_id
-                WHERE pm.active = 1 AND pf.active = 1
-                  AND pm.identity_source = 'BLUETOOTH'
-                  AND pm.bluetooth_name_prefix <> ''
-                  AND (? IS NULL OR EXISTS(
-                        SELECT 1 FROM user_product_model_permissions permission
-                        WHERE permission.user_id = ? AND permission.product_model_id = pm.id
-                  ))
-                """,
-                (operator_id, operator_id),
-            ).fetchall()
-        ]
-        if not BLUETOOTH_OPERATION_LOCK.acquire(blocking=False):
-            raise ApiError("另一个蓝牙采集操作正在进行，请稍后重试", 409)
-        try:
-            return success(discover_v2_devices(name_prefixes=prefixes))
-        finally:
-            BLUETOOTH_OPERATION_LOCK.release()
-
-    @app.post("/api/bluetooth/read-sn")
-    def bluetooth_read_sn():
-        payload = request.get_json(silent=True) or {}
-        database = get_db()
-        operator_id = current_operator_id()
-        models = database.execute(
-            """
-            SELECT pm.*, pf.product_code AS product_family_code,
-                   pf.name AS product_family_name, 0 AS finished_product_count,
-                   0 AS trace_plan_count
-            FROM product_models pm JOIN product_families pf ON pf.id = pm.product_family_id
-            WHERE pm.active = 1 AND pf.active = 1 AND pm.identity_source = 'BLUETOOTH'
-              AND (? IS NULL OR EXISTS(
-                    SELECT 1 FROM user_product_model_permissions permission
-                    WHERE permission.user_id = ? AND permission.product_model_id = pm.id
-              ))
-            ORDER BY length(pm.bluetooth_name_prefix) DESC
-            """,
-            (operator_id, operator_id),
-        ).fetchall()
-        selected_model = None
-        if payload.get("productModelId") not in {None, ""}:
-            try:
-                requested_model_id = int(payload.get("productModelId"))
-            except (TypeError, ValueError):
-                raise ApiError("产品型号无效") from None
-            selected_model = next((row for row in models if row["id"] == requested_model_id), None)
-        else:
-            device_name = str(payload.get("name") or "")
-            selected_model = next(
-                (
-                    row for row in models
-                    if row["bluetooth_name_prefix"]
-                    and device_name.startswith(row["bluetooth_name_prefix"])
-                ),
-                None,
-            )
-        if not selected_model:
-            raise ApiError("该蓝牙设备不属于已启用的产品型号", 409)
-        if not BLUETOOTH_OPERATION_LOCK.acquire(blocking=False):
-            raise ApiError("另一个蓝牙采集操作正在进行，请稍后重试", 409)
-        try:
-            identity = read_v2_identity(
-                payload.get("address"),
-                payload.get("name"),
-                notify_uuid=selected_model["bluetooth_notify_uuid"],
-            )
-        finally:
-            BLUETOOTH_OPERATION_LOCK.release()
-        reported_model = str(identity.get("model") or "").strip()
-        if reported_model and reported_model.upper() != selected_model["model_code"].upper():
-            raise ApiError(
-                f"设备上报型号 {reported_model}，与所选型号 {selected_model['model_code']} 不一致",
-                409,
-            )
-        existing = database.execute("SELECT id FROM machines WHERE sn = ?", (identity["sn"],)).fetchone()
-        return success(
-            {
-                **identity,
-                "model": selected_model["model_code"],
-                "productModel": product_model_dict(selected_model),
-                "alreadyRegistered": bool(existing),
-                "machineId": existing["id"] if existing else None,
-            }
-        )
 
     @app.get("/api/dashboard")
     def dashboard():
@@ -8596,6 +8465,11 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
                 "latestQuantity": int(row["latest_quantity"]) if row else 0,
             }
         )
+
+    # Blueprints are registered in one place so the full set of route modules is
+    # visible without reading the whole factory. Each is a domain that no longer
+    # needs to live inside create_app().
+    app.register_blueprint(bluetooth_bp)
 
     return app
 
