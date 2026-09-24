@@ -309,7 +309,7 @@ def _impl_scan_gun_inbound():
 | `POST` | `/api/auth/login` | public (no login) |  | handler | yes |
 | `POST` | `/api/auth/logout` | any authenticated |  | handler |  |
 | `GET` | `/api/auth/me` | any authenticated |  | handler |  |
-| `POST` | `/api/batch-entry/scan` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_batch_entry_scan, run_idempotent | yes |
+| `POST` | `/api/batch-entry/scan` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_batch_entry_scan | yes |
 | `GET` | `/api/batch-trace-records` | any authenticated |  | handler |  |
 | `POST` | `/api/batch-trace-records/<int:record_id>/hold` | ADMIN |  | handler | yes |
 | `POST` | `/api/batch-trace-records/<int:record_id>/pass` | ADMIN |  | service: transition_batch_quality | yes |
@@ -358,7 +358,7 @@ def _impl_scan_gun_inbound():
 | `DELETE` | `/api/product-models/<int:model_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `PUT` | `/api/product-models/<int:model_id>` | ADMIN |  | handler | yes |
 | `GET` | `/api/production-batches` | any authenticated |  | handler |  |
-| `POST` | `/api/production-batches` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_batch, run_idempotent | yes |
+| `POST` | `/api/production-batches` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_batch | yes |
 | `GET` | `/api/production-batches/<int:batch_id>` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-batches/<int:batch_id>/qr` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-orders` | ADMIN + WAREHOUSE |  | handler |  |
