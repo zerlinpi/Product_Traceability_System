@@ -427,7 +427,7 @@ def test_batch_generation_validation_rejects_without_side_effects(
 #                        mutated and no route exists to re-code a batch.
 # ===========================================================================
 
-import app as app_module
+from traceability.api import production_batches as batches_module
 
 
 def _new_client(db_path: Path):
@@ -460,8 +460,12 @@ def test_duplicate_batch_code_collision_is_rejected(monkeypatch) -> None:
 
         # Force every generation to mint the SAME batch code value so the second
         # attempt collides on the UNIQUE constraint (Requirement 1.9).
+        #
+        # Patched on the module that calls it, not on ``app``: the route moved
+        # into a blueprint, and a module holds its own reference to an imported
+        # name, so patching app.new_batch_code would no longer reach it.
         monkeypatch.setattr(
-            app_module, "new_batch_code", lambda now_compact, prefix: "B-DUP-FIXED-CODE"
+            batches_module, "new_batch_code", lambda now_compact, prefix: "B-DUP-FIXED-CODE"
         )
 
         first = client.post(

@@ -1,6 +1,6 @@
 """Property-based tests for batch inventory deduction (Property 11).
 
-These tests exercise the ``deduct_batch_inventory`` helper (app.py, task 5.1)
+These tests exercise the ``deduct_batch_inventory`` helper (traceability/inventory.py, task 5.1)
 which, within an already-open ``BEGIN IMMEDIATE`` transaction, deducts
 ``N × 每套用量`` (per-unit usage) from each supplier inventory batch bound by the
 product's ACTIVE trace plan and writes exactly one ``ISSUE`` movement per
@@ -24,9 +24,13 @@ from unittest.mock import patch
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-import app as batch_app
-from app import compute_batch_inventory_requirements, create_app, deduct_batch_inventory
+from app import create_app
+from traceability.api import production_batches as batches_module
 from traceability.db import connect_database
+from traceability.inventory import (
+    compute_batch_inventory_requirements,
+    deduct_batch_inventory,
+)
 
 from batch_strategies import build_product_scenario, per_unit_usages, valid_quantities
 
@@ -415,10 +419,15 @@ def test_transaction_rollback_is_atomic_on_mid_transaction_failure(
             # insert, inventory deduction / movements and consumption inserts,
             # so the maximum amount of partial work exists inside the open
             # transaction when the failure fires (Requirement 4.4).
+            #
+            # Patched where the route calls it, not on ``app``: the route moved
+            # into a blueprint, and a module holds its own reference to an
+            # imported name, so patching app.record_audit_event would no longer
+            # reach it.
             def _boom(*_args, **_kwargs):
                 raise _InjectedFailure("injected mid-transaction failure")
 
-            with patch.object(batch_app, "record_audit_event", _boom):
+            with patch.object(batches_module, "record_audit_event", _boom):
                 response = client.post(
                     "/api/production-batches",
                     json={

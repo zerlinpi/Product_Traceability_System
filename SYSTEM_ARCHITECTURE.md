@@ -243,12 +243,13 @@
 | --- | --- | --- |
 | 1a | `errors.py` + `validators.py`（错误类型与纯校验函数） | ✅ 已完成 |
 | 1b | `responses.py`（信封与安全头） | ✅ 已完成 |
-| 1c | `serializers.py`（12 个行→JSON 序列化函数） | ✅ 已完成 |
+| 1c | `serializers.py`（行→JSON 序列化函数） | ✅ 已完成 |
 | 1d | `audit_events.py`（审计写入，蓝图必需） | ✅ 已完成 |
-| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 🔄 进行中（5 个域已完成） |
-| 3 | 领域逻辑（库存扣减、追溯、扫码状态机）外移 | 待做 |
+| 1e | `idempotent_http.py`（幂等请求包装，写接口蓝图必需） | ✅ 已完成 |
+| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 🔄 进行中（7 个域已完成） |
+| 3 | 领域逻辑外移（库存扣减、批次登记/反向追溯） | 🔄 已起步（`inventory.py`、`production.py`） |
 
-已迁出的领域（共 17 条路由）：
+已迁出的领域（共 21 条路由）：
 
 | 蓝图 | 路由数 | 备注 |
 | --- | --- | --- |
@@ -258,9 +259,16 @@
 | `api/machines.py` | 3 | 路由在源码中不连续，仍归一处 |
 | `api/suppliers.py` | 4 | 详情视图是最重的端点 |
 | `api/product_models.py` | 4 | 顺带修掉硬编码 `"ADMIN"` 字面量 |
+| `api/production_batches.py` | 4 | 需先抽阶段 3 的库存/批次逻辑 |
 
-`app.py`：8949 → 约 7700 行。每个阶段都由全量测试与
-`tools/extract_routes.py --check`（路由与权限文档一致）共同守护。
+`app.py`：8949 → 约 7086 行。
+
+> **顺序很重要**：路由依赖的每个辅助函数都必须在它之前外移，
+> 否则蓝图够不到（蓝图没有对 `create_app` 的闭包）。
+> 这也是为什么每抽一个领域，常常要先抽一两个支撑模块。
+
+每个阶段都由全量测试与 `tools/extract_routes.py --check`
+（路由与权限文档一致）共同守护。
 
 ### 10.4 蓝图与权限门禁
 

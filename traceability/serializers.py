@@ -36,6 +36,7 @@ __all__ = [
     "part_label_dict",
     "part_label_batch_dict",
     "batch_trace_record_dict",
+    "production_batch_dict",
 ]
 
 
@@ -328,4 +329,48 @@ def batch_trace_record_dict(row: sqlite3.Row) -> dict[str, Any]:
         "generatedAt": row["generated_at"],
         "operatorName": row["operator_name"],
         "registeredAt": row["registered_at"],
+    }
+
+
+def production_batch_dict(
+    database: sqlite3.Connection,
+    row: sqlite3.Row,
+) -> dict[str, Any]:
+    """Serialize a ``production_batches`` row for API responses.
+
+    Carries the batch code value, product model, prefix, planned quantity,
+    generation time and operator (Requirements 1.3, 1.5, 3.1) plus the QR /
+    download URLs served by task 6.2. The batch QR encodes ``PTS:B:{batch_code}``
+    so a single code value represents the whole batch (Requirements 11.1, 11.2).
+    """
+    keys = row.keys()
+    # Use the product model columns when the caller already joined them (list
+    # endpoints), otherwise resolve them with a single lookup. This avoids an
+    # N+1 product query when serializing a whole batch list.
+    if "model_code" in keys:
+        model_code = row["model_code"]
+        product_name = row["product_name"] if "product_name" in keys else None
+    else:
+        product = database.execute(
+            "SELECT model_code, name FROM product_models WHERE id = ?",
+            (row["product_model_id"],),
+        ).fetchone()
+        model_code = product["model_code"] if product else None
+        product_name = product["name"] if product else None
+    batch_code = row["batch_code"]
+    return {
+        "id": row["id"],
+        "batchCode": batch_code,
+        "identificationCode": batch_identification_code(batch_code),
+        "productModelId": row["product_model_id"],
+        "productModelCode": model_code,
+        "productName": product_name,
+        "tracePlanId": row["trace_plan_id"],
+        "prefix": row["prefix"],
+        "plannedQuantity": row["planned_quantity"],
+        "generatedBy": row["generated_by"] if "generated_by" in keys else "",
+        "generatedByUserId": row["generated_by_user_id"],
+        "generatedAt": row["generated_at"],
+        "qrUrl": f"/api/production-batches/{row['id']}/qr",
+        "downloadUrl": f"/api/production-batches/{row['id']}/qr",
     }
