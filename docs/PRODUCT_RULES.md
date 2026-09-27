@@ -44,7 +44,7 @@
 
 ### ⚠️ 冲突 C2：运营的产品可见性
 
-- 运营只能看到**本人创建**的产品与采购订单（`created_by_user_id` 过滤，`app.py:7074` 等）。
+- 运营只能看到**本人创建**的产品与采购订单（`created_by_user_id` 过滤；采购订单见 `traceability/purchasing.py` 的 `query_purchase_orders()`，产品见 `app.py`）。
 - 管理员可见全部产品及添加人。
 - 这是**数据范围过滤**，不是鉴权拒绝——即运营请求他人产品时得到的是空列表/404，而非 403。
 
@@ -241,13 +241,13 @@ ASSEMBLED --hold--> HOLD       （需 ADMIN，原因 1-500 字符）
 
 ## 12. 生产环境守卫
 
-`PTS_ENV=production` 时，`app.py:1659-1669` 会在启动时**直接抛 `RuntimeError` 拒绝启动**：
+`PTS_ENV=production` 时，`create_app()` 内的生产守卫（`app.py:1023-1033`）会在启动时**直接抛 `RuntimeError` 拒绝启动**：
 
 - `SECRET_KEY` 为默认值或示例值，**或**长度 < 32
 - `BOOTSTRAP_ADMIN_PASSWORD` 为默认值或示例值
 
 本地开发默认管理员：`admin` / `Admin@12345`，**首次登录强制改密**。
-该默认值出现在 `README.md`、`app.py:84` 与测试中，属**有意公开的本地开发默认值**，
+该默认值出现在 `README.md`、`app.py:130` 与测试中，属**有意公开的本地开发默认值**，
 生产守卫使其无法用于生产部署。
 
 ---

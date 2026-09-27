@@ -107,3 +107,33 @@ def detect_product_image_type(data: bytes) -> tuple[str, str]:
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "webp", "image/webp"
     raise ApiError("仅支持 PNG、JPG、GIF 或 WEBP 图片")
+
+
+def business_id(value: object, label: str) -> int:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise ApiError(f"请选择{label}")
+    if isinstance(value, bool):
+        raise ApiError(f"{label}无效")
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as error:
+        raise ApiError(f"{label}无效") from error
+    if result <= 0:
+        raise ApiError(f"{label}无效")
+    return result
+
+
+def business_quantity(value: object, label: str) -> int:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise ApiError(f"{label}必须是 1-999999 之间的整数")
+    if isinstance(value, bool) or (
+        isinstance(value, float) and not value.is_integer()
+    ):
+        raise ApiError(f"{label}必须是 1-999999 之间的整数")
+    try:
+        quantity = int(value)
+    except (TypeError, ValueError) as error:
+        raise ApiError(f"{label}必须是 1-999999 之间的整数") from error
+    if not 1 <= quantity <= 999999:
+        raise ApiError(f"{label}必须是 1-999999 之间的整数")
+    return quantity

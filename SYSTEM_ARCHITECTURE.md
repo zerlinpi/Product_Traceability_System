@@ -246,26 +246,55 @@
 | 1c | `serializers.py`（行→JSON 序列化函数） | ✅ 已完成 |
 | 1d | `audit_events.py`（审计写入，蓝图必需） | ✅ 已完成 |
 | 1e | `idempotent_http.py`（幂等请求包装，写接口蓝图必需） | ✅ 已完成 |
-| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 🔄 进行中（7 个域已完成） |
-| 3 | 领域逻辑外移（库存扣减、批次登记/反向追溯） | 🔄 已起步（`inventory.py`、`production.py`） |
+| 1f | `lingxing_writes.py`（领星推送共享管道） | ✅ 已完成 |
+| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 🔄 进行中（8 个域已完成） |
+| 3 | 领域逻辑外移（库存、批次、采购） | 🔄 已起步 |
 
-已迁出的领域（共 21 条路由）：
+已迁出的领域（共 31 条路由）：
 
-| 蓝图 | 路由数 | 备注 |
+| 蓝图 | 路由数 | 需先抽出的支撑模块 |
 | --- | --- | --- |
-| `api/bluetooth.py` | 3 | 首个，用于验证模式 |
-| `api/product_families.py` | 3 | 零额外抽取（阶段 1 红利） |
-| `api/part_types.py` | 3 | 需先抽 `audit_events.py` |
-| `api/machines.py` | 3 | 路由在源码中不连续，仍归一处 |
-| `api/suppliers.py` | 4 | 详情视图是最重的端点 |
-| `api/product_models.py` | 4 | 顺带修掉硬编码 `"ADMIN"` 字面量 |
-| `api/production_batches.py` | 4 | 需先抽阶段 3 的库存/批次逻辑 |
+| `api/bluetooth.py` | 3 | — |
+| `api/product_families.py` | 3 | — |
+| `api/part_types.py` | 3 | `audit_events.py` |
+| `api/machines.py` | 3 | — |
+| `api/suppliers.py` | 4 | — |
+| `api/product_models.py` | 4 | — |
+| `api/production_batches.py` | 4 | `inventory.py`、`production.py` |
+| `api/purchase_orders.py` | 10 | `lingxing_writes.py`、`purchasing.py` |
 
-`app.py`：8949 → 约 7086 行。
+`app.py`：8949 → 约 6173 行。
 
-> **顺序很重要**：路由依赖的每个辅助函数都必须在它之前外移，
-> 否则蓝图够不到（蓝图没有对 `create_app` 的闭包）。
-> 这也是为什么每抽一个领域，常常要先抽一两个支撑模块。
+### 10.5 顺序与「共享 helper」陷阱
+
+**路由依赖的每个辅助函数都必须在它之前外移**，否则蓝图够不到
+（蓝图没有对 `create_app` 的闭包）。所以每抽一个领域，常常要先抽支撑模块。
+
+但更危险的是**反向错误**：把**跨领域共用**的 helper 塞进某一个领域模块。
+采购订单搬迁时确认了 6 个 helper 是共用的：
+
+| helper | 采购订单 | 入库单 | 库存同步 |
+| --- | --- | --- | --- |
+| `business_id` / `business_quantity` | ✓ | ✓ | ✓ |
+| `ensure_lingxing_operation_ready` | ✓ | ✓ | ✓ |
+| `external_identifier` | ✓ | ✓ | ✓ |
+| `guard_is_stale` | ✓ | ✓ | ✓ |
+| `lingxing_service` | ✓ | ✓ | ✓ |
+| `PUSH_GUARD_TIMEOUT` | ✓ | ✓ | |
+
+它们进了 `lingxing_writes.py`（推送管道）与 `validators.py`（入参校验），
+**不是** `purchasing.py`。判据是「谁在用」，不是「谁先用到」。
+
+### 10.6 守卫必须留在 HTTP 层
+
+`tools/extract_routes.py` 通过**跟踪 `create_app` 内的调用图**解析守卫。
+守卫一旦随业务逻辑进入领域模块，提取器就看不见它——
+采购订单搬迁时 `/push` 的有效权限一度从 `ADMIN + OPERATIONS`
+被误报成 `any authenticated`。
+
+**运行时权限没变，但权限文档失真了**，而这份文档是安全评审的依据。
+因此：**授权调用写在路由里**，领域函数只做业务。这既是分层要求，
+也是让静态门禁保持可信的前提。
 
 每个阶段都由全量测试与 `tools/extract_routes.py --check`
 （路由与权限文档一致）共同守护。

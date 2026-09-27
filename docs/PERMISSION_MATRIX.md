@@ -232,20 +232,25 @@ if operator_id is not None and row["completed_by_user_id"] != operator_id:
 即：管理员界面上「给仓管分配产品」的操作会持久化并回显，但**不产生任何权限效果**。
 
 ### D5 — 鉴权分散在 handler 与 service 两层，无统一规律
-**10 个路由**的守卫在被调用的函数内，而非路由函数体内：
+**9 个路由**的守卫在被调用的函数内，而非路由函数体内：
 
 | Method | Path | 守卫所在函数 |
 | --- | --- | --- |
 | `POST` | `/api/batch-trace-records/<int:record_id>/pass` | `transition_batch_quality` |
 | `PUT` | `/api/records/<int:record_id>` | `editable_record` |
 | `DELETE` | `/api/records/<int:record_id>` | `editable_record` |
-| `POST` | `/api/purchase-orders/<int:purchase_order_id>/push` | `push_purchase_order_record` |
 | `POST` | `/api/production-orders` | `_impl_create_production_order` |
 | `POST` | `/api/production-orders/batch` | `_impl_create_production_orders_batch` |
 | `POST` | `/api/production-batches` | `_impl_create_production_batch` |
 | `POST` | `/api/batch-entry/scan` | `_impl_batch_entry_scan` |
 | `POST` | `/api/purchase-orders` | `_impl_create_purchase_order` |
 | `POST` | `/api/scan-gun/inbound` | `_impl_scan_gun_inbound` |
+
+> **2026-09-27：`/api/purchase-orders/<id>/push` 已移出本表**（10 → 9）。
+> 采购订单领域迁到 `traceability/purchasing.py` 时，守卫**被有意上移到路由层**：
+> 提取器只跟踪 `create_app` 内的调用图，看不见其他模块，
+> 守卫留在领域模块里会让该路由被误报成 `any authenticated`。
+> **有效权限未变**（仍为 `ADMIN + OPERATIONS`），只是守卫所在的层变了。
 
 **典型对照**：`/pass` 与 `/hold` 是同一状态机的两个方向，`/hold` 把 `require_admin()` 写在
 handler 里，`/pass` 写在 service 里。只看 handler 会误判 `/pass` 无守卫
@@ -362,23 +367,23 @@ def _impl_scan_gun_inbound():
 | `GET` | `/api/production-batches/<int:batch_id>` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-batches/<int:batch_id>/qr` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-orders` | ADMIN + WAREHOUSE |  | handler |  |
-| `POST` | `/api/production-orders` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_order, business_id, generate_production_order_ | yes |
+| `POST` | `/api/production-orders` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_order, generate_production_order_for_po, produ | yes |
 | `GET` | `/api/production-orders/<int:production_order_id>` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
 | `GET` | `/api/production-orders/<int:production_order_id>/qr` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
-| `POST` | `/api/production-orders/batch` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_orders_batch, business_id, generate_production | yes |
+| `POST` | `/api/production-orders/batch` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_orders_batch, generate_production_order_for_po | yes |
 | `GET` | `/api/products` | any authenticated |  | handler |  |
 | `POST` | `/api/products` | ADMIN + OPERATIONS |  | handler | yes |
 | `PUT` | `/api/products/<int:product_model_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `POST` | `/api/products/<int:product_model_id>/code-sets` | ADMIN |  | handler | yes |
 | `GET` | `/api/products/<int:product_model_id>/qrcodes.zip` | ADMIN |  | handler |  |
 | `GET` | `/api/purchase-orders` | any authenticated |  | handler |  |
-| `POST` | `/api/purchase-orders` | ADMIN + OPERATIONS |  | service: _impl_create_purchase_order, business_id, business_quantity, clean_pur | yes |
+| `POST` | `/api/purchase-orders` | ADMIN + OPERATIONS |  | service: _impl_create_purchase_order | yes |
 | `DELETE` | `/api/purchase-orders/<int:purchase_order_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `GET` | `/api/purchase-orders/<int:purchase_order_id>` | any authenticated |  | handler |  |
 | `PUT` | `/api/purchase-orders/<int:purchase_order_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `GET` | `/api/purchase-orders/<int:purchase_order_id>/export` | ADMIN + OPERATIONS |  | handler |  |
 | `GET` | `/api/purchase-orders/<int:purchase_order_id>/factory-progress` | ADMIN + OPERATIONS |  | handler |  |
-| `POST` | `/api/purchase-orders/<int:purchase_order_id>/push` | ADMIN + OPERATIONS |  | service: ensure_lingxing_operation_ready, external_identifier, guard_is_stale,  | yes |
+| `POST` | `/api/purchase-orders/<int:purchase_order_id>/push` | ADMIN + OPERATIONS |  | handler |  |
 | `GET` | `/api/purchase-orders/<int:purchase_order_id>/sync-status` | ADMIN + OPERATIONS |  | handler |  |
 | `GET` | `/api/purchase-orders/export` | ADMIN + OPERATIONS |  | handler |  |
 | `GET` | `/api/records` | ADMIN + WAREHOUSE scope:product(NOOP) | `RECORD_VIEW` | handler |  |
@@ -388,7 +393,7 @@ def _impl_scan_gun_inbound():
 | `GET` | `/api/records/export.xlsx` | any authenticated |  | handler |  |
 | `PUT` | `/api/records/status/bulk` | ADMIN |  | handler | yes |
 | `POST` | `/api/scan` | ADMIN + WAREHOUSE scope:product+scope:supplier(NOOP) | `LEGACY_SCAN` | handler | yes |
-| `POST` | `/api/scan-gun/inbound` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_scan_gun_inbound, business_id, business_quantity, production_ord | yes |
+| `POST` | `/api/scan-gun/inbound` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_scan_gun_inbound, production_order_row, stock_in_block_reason | yes |
 | `POST` | `/api/scan-gun/lookup` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
 | `POST` | `/api/scan/reset` | any authenticated |  | handler | yes |
 | `GET` | `/api/scan/session` | any authenticated |  | handler |  |
@@ -424,4 +429,12 @@ python tools/extract_routes.py --sync     # 回写本文档的生成区块
 ```
 
 `tools/extract_routes.py` 会构建 `create_app()` 内嵌套函数的调用图，
-传递解析守卫（因此能正确识别 D5 中 6 个 service 层守卫）。
+传递解析守卫（因此能正确识别 D5 表中那些 service 层守卫）。
+
+> **局限（2026-09-27 实测）**：调用图**只覆盖 `create_app()` 内部**。
+> 守卫一旦随业务逻辑移入独立模块（如 `traceability/purchasing.py`），
+> 提取器就看不见它，该路由会被**误报成 `any authenticated`**。
+> 这不是纸面问题：权限矩阵是安全评审的依据，**低报权限等于让文档说谎**。
+>
+> 因此约定：**授权调用写在路由里，领域函数只做业务**。
+> 搬领域代码时若发现某路由的有效权限"变宽"了，先确认是提取器失明还是真的越权。

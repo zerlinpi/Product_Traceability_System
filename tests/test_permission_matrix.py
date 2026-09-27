@@ -149,6 +149,13 @@ GATE_REJECTION_MESSAGE = "登录状态已失效，请重新登录"
 # Routes whose role guard lives inside the helper they delegate to, not in the
 # handler body.  DEVIATION D5, plus the idempotent-write split where the handler
 # is a thin `run_idempotent(...)` shim and the guard sits in the producer.
+#
+# `/api/purchase-orders/<id>/push` used to be in this set. It left when the
+# purchase-order domain moved to traceability/purchasing.py: the guard was
+# deliberately moved up into the route, because this tool follows the call graph
+# inside create_app and cannot see into another module — leaving it in the domain
+# made the route read as merely "any authenticated". Effective access is
+# unchanged (ADMIN + OPERATIONS); only the layer holding the guard moved.
 EXPECTED_SERVICE_GUARDED_ROUTES = {
     ("POST", "/api/batch-entry/scan"),
     ("POST", "/api/batch-trace-records/<int:record_id>/pass"),
@@ -156,7 +163,6 @@ EXPECTED_SERVICE_GUARDED_ROUTES = {
     ("POST", "/api/production-orders"),
     ("POST", "/api/production-orders/batch"),
     ("POST", "/api/purchase-orders"),
-    ("POST", "/api/purchase-orders/<int:purchase_order_id>/push"),
     ("DELETE", "/api/records/<int:record_id>"),
     ("PUT", "/api/records/<int:record_id>"),
     ("POST", "/api/scan-gun/inbound"),

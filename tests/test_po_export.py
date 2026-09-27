@@ -4,7 +4,7 @@ from io import BytesIO
 
 from openpyxl import load_workbook
 
-from app import PURCHASE_ORDER_EXPORT_COLUMNS
+from traceability.purchasing import PURCHASE_ORDER_EXPORT_COLUMNS
 from test_inbound_receipts import create_order
 from test_purchase_orders import setup_case
 from traceability.db import connect_database

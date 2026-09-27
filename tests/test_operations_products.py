@@ -13,7 +13,7 @@ from io import BytesIO
 
 from openpyxl import load_workbook
 
-from app import PURCHASE_ORDER_EXPORT_COLUMNS
+from traceability.purchasing import PURCHASE_ORDER_EXPORT_COLUMNS
 from capability_helpers import (
     bootstrap_admin,
     insert_user,

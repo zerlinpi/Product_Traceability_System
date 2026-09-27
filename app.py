@@ -8,7 +8,6 @@ import secrets
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta
-from decimal import Decimal
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
@@ -22,7 +21,6 @@ from traceability.codes import (
     machine_identification_code,
     make_qr_svg,
     new_batch_code,
-    new_event_id,
     new_label_batch_code,
     new_part_identification_code,
     new_trace_number,
@@ -38,6 +36,7 @@ from traceability.api.machines import machines_bp
 from traceability.api.suppliers import suppliers_bp
 from traceability.api.product_models import product_models_bp
 from traceability.api.production_batches import production_batches_bp
+from traceability.api.purchase_orders import purchase_orders_bp
 from traceability.ble_collector import BluetoothCollectionError
 from traceability.db import get_db, initialize_database
 from traceability.auth import (
@@ -57,12 +56,27 @@ from traceability.auth import (
 from traceability.audit_events import record_audit_event
 from traceability.capabilities import ROLE_WAREHOUSE, Capability
 from traceability.errors import ApiError
+from traceability.purchasing import (
+    product_model_for_purchase_order,
+    purchase_order_planned_quantity,
+    purchase_order_row,
+)
 from traceability.production import (
     production_batch_registration,
     production_batch_reverse_trace,
 )
 from traceability.idempotent_http import run_idempotent
 from traceability.login_guard import LoginPolicy
+from traceability.lingxing_writes import (
+    PUSH_GUARD_TIMEOUT,
+    LINGXING_ENDPOINT_SETTING_KEYS,
+    LINGXING_TOKEN_CACHE,
+    ensure_lingxing_operation_ready,
+    external_identifier,
+    guard_is_stale,
+    lingxing_service,
+    merged_lingxing_endpoints,
+)
 from traceability.responses import failure, secure_response, success
 from traceability.serializers import (
     audit_event_dict,
@@ -76,8 +90,9 @@ from traceability.serializers import (
     batch_trace_record_dict,
 )
 from traceability.validators import (
+    business_id,
+    business_quantity,
     clean_text,
-    coerce_export_number,
     detect_product_image_type,
     now_iso,
     parse_bool,
@@ -96,9 +111,6 @@ from traceability.lingxing import (
     DEFAULT_REFRESH_TOKEN_PATH,
     DEFAULT_TOKEN_PATH,
     LingxingError,
-    LingxingIntegrationService,
-    LingxingTokenCache,
-    RetryConfig,
     load_credentials,
     mask_secret,
 )
@@ -119,19 +131,6 @@ DEFAULT_SECRET_KEY = "pts-local-development-key-change-before-server-deployment"
 DEFAULT_BOOTSTRAP_PASSWORD = "Admin@12345"
 EXAMPLE_SECRET_KEY = "replace-with-a-random-string-of-at-least-32-characters"
 EXAMPLE_BOOTSTRAP_PASSWORD = "replace-with-a-strong-initial-password"
-LINGXING_TOKEN_CACHE = LingxingTokenCache()
-PURCHASE_ORDER_EXPORT_COLUMNS = [
-    "标识号", "采购单号", "供应商", "联系人", "采购方", "联系方式", "结算方式",
-    "预付比例", "结算账期", "结算描述", "支付方式", "含税", "费用分配方式",
-    "采购币种", "当前汇率", "运费", "运费币种", "其他费用", "其他费用币种",
-    "采购员", "质检类型", "单据备注", "颜色", "材质", "内含配件", "包装要求",
-    "特殊要求", "HS海关编码", "交货周期（天数）", "采购仓库", "计划编号", "SKU",
-    "店铺", "FNSKU", "是否赠品", "单箱数量", "箱数", "实际采购量", "含税单价",
-    "税率", "预计到货时间", "产品备注", "更新报价", "内含配件(产品)",
-    "包装要求(产品)", "特殊要求（规避专利）", "HS海关编码(产品)",
-    "交货周期（天数）(产品)",
-]
-PURCHASE_ORDER_EXPORT_COLUMN_SET = set(PURCHASE_ORDER_EXPORT_COLUMNS)
 # Extended product profile (product management). Stored per product in
 # ``product_models.attributes_json`` keyed by column name so the catalog matches
 # the external product template without one SQL column per attribute.
@@ -170,12 +169,6 @@ PRODUCT_IMAGE_NAME_PATTERN = re.compile(r"^[0-9a-f]{8,}-[0-9a-f]{16,}\.(?:png|jp
 # for them and a client cannot desynchronize them from the real product.
 PRODUCT_ATTRIBUTE_DERIVED_COLUMNS = {
     "SKU", "品名", "创建时间", "创建人", "更新时间", "状态", "识别码",
-}
-# Columns whose values are numeric so the exported cell keeps a numeric type /
-# format instead of being written as text.
-PURCHASE_ORDER_NUMERIC_COLUMNS = {
-    "预付比例", "结算账期", "当前汇率", "运费", "其他费用", "单箱数量", "箱数",
-    "实际采购量", "含税单价", "税率",
 }
 
 
@@ -279,29 +272,8 @@ def product_attributes_with_defaults(
 
 # Lingxing business write endpoints are configured (route path or full URL) in
 # settings so operations can enable the push features without redeploying.
-LINGXING_ENDPOINT_SETTING_KEYS = {
-    "purchase_order": "lingxing.endpoint.purchase_order",
-    "inbound_receipt": "lingxing.endpoint.inbound_receipt",
-    "inventory_sync": "lingxing.endpoint.inventory_sync",
-}
 
 
-def load_lingxing_endpoint_overrides(database: sqlite3.Connection) -> dict[str, str]:
-    """Return the non-empty Lingxing endpoint overrides stored in app_settings."""
-    try:
-        rows = database.execute(
-            "SELECT setting_key, setting_value FROM app_settings WHERE setting_key IN (?, ?, ?)",
-            tuple(LINGXING_ENDPOINT_SETTING_KEYS.values()),
-        ).fetchall()
-    except sqlite3.Error:
-        return {}
-    stored = {str(row["setting_key"]): str(row["setting_value"] or "").strip() for row in rows}
-    overrides: dict[str, str] = {}
-    for operation, key in LINGXING_ENDPOINT_SETTING_KEYS.items():
-        value = stored.get(key, "")
-        if value:
-            overrides[operation] = value
-    return overrides
 
 
 def clean_lingxing_endpoint(value: object, label: str) -> str:
@@ -1364,10 +1336,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             }
         )
 
-    def merged_lingxing_endpoints(database: sqlite3.Connection) -> dict[str, str]:
-        endpoints = dict(app.config.get("LINGXING_ENDPOINTS") or {})
-        endpoints.update(load_lingxing_endpoint_overrides(database))
-        return endpoints
 
     def lingxing_endpoint_readiness(database: sqlite3.Connection) -> dict[str, bool]:
         """Report which write operations have an endpoint configured.
@@ -4943,185 +4911,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     # ------------------------------------------------------------------
     # Lingxing integration, production orders and finished-goods inbound
     # ------------------------------------------------------------------
-    def business_id(value: object, label: str) -> int:
-        if value is None or (isinstance(value, str) and not value.strip()):
-            raise ApiError(f"请选择{label}")
-        if isinstance(value, bool):
-            raise ApiError(f"{label}无效")
-        try:
-            result = int(value)
-        except (TypeError, ValueError) as error:
-            raise ApiError(f"{label}无效") from error
-        if result <= 0:
-            raise ApiError(f"{label}无效")
-        return result
 
-    def business_quantity(value: object, label: str) -> int:
-        if value is None or (isinstance(value, str) and not value.strip()):
-            raise ApiError(f"{label}必须是 1-999999 之间的整数")
-        if isinstance(value, bool) or (
-            isinstance(value, float) and not value.is_integer()
-        ):
-            raise ApiError(f"{label}必须是 1-999999 之间的整数")
-        try:
-            quantity = int(value)
-        except (TypeError, ValueError) as error:
-            raise ApiError(f"{label}必须是 1-999999 之间的整数") from error
-        if not 1 <= quantity <= 999999:
-            raise ApiError(f"{label}必须是 1-999999 之间的整数")
-        return quantity
 
-    def lingxing_service(database: sqlite3.Connection) -> LingxingIntegrationService:
-        factory = app.config.get("LINGXING_SERVICE_FACTORY")
-        if factory:
-            return factory(database)
-        return LingxingIntegrationService(
-            database=database,
-            http_client=app.config.get("LINGXING_HTTP_CLIENT"),
-            clock=app.config.get("LINGXING_CLOCK"),
-            sleeper=app.config.get("LINGXING_SLEEP"),
-            retry_config=RetryConfig(
-                max_retries=int(app.config["LINGXING_MAX_RETRIES"]),
-                request_timeout=int(app.config["LINGXING_REQUEST_TIMEOUT"]),
-                retry_interval=int(app.config["LINGXING_RETRY_INTERVAL"]),
-            ),
-            endpoints=merged_lingxing_endpoints(database),
-            credential_config=app.config.get("LINGXING_CREDENTIALS"),
-            api_base_url=app.config.get("LINGXING_API_BASE_URL", DEFAULT_API_BASE_URL),
-            policy=app.config.get("LINGXING_ENDPOINT_POLICY"),
-            token_cache=LINGXING_TOKEN_CACHE,
-        )
 
-    def ensure_lingxing_operation_ready(service: Any, operation: str) -> None:
-        validator = getattr(service, "ensure_operation_ready", None)
-        if callable(validator):
-            validator(operation)
-        else:
-            service.credentials()
 
-    def purchase_order_row(database: sqlite3.Connection, purchase_order_id: int):
-        # LEFT JOINs so free-form orders (no supplier / part link) are still
-        # returned; the product link is included for the "和产品挂钩" requirement.
-        return database.execute(
-            """
-            SELECT po.*, s.supplier_code, s.name AS supplier_name,
-                   s.contact AS supplier_contact, s.phone AS supplier_phone,
-                   pt.part_code, pt.name AS part_name, pt.specification,
-                   pm.model_code AS product_model_code, pm.name AS product_model_name,
-                   (SELECT COALESCE(SUM(ir.quantity), 0) FROM inbound_receipts ir
-                     WHERE ir.purchase_order_id = po.id) AS received_quantity,
-                   (SELECT MAX(ir.received_at) FROM inbound_receipts ir
-                     WHERE ir.purchase_order_id = po.id) AS last_received_at
-            FROM purchase_orders po
-            LEFT JOIN suppliers s ON s.id = po.supplier_id
-            LEFT JOIN part_types pt ON pt.id = po.part_type_id
-            LEFT JOIN product_models pm ON pm.id = po.product_model_id
-            WHERE po.id = ?
-            """,
-            (purchase_order_id,),
-        ).fetchone()
 
-    def purchase_order_summary(row: sqlite3.Row, fields: dict[str, Any]) -> dict[str, Any]:
-        """Flatten the fields the warehouse needs when receiving / producing.
 
-        Everything is derived from what operations entered plus the recorded
-        inbound receipts, so the production-order and supplier-receiving pages
-        can show one consistent block: identity (SKU / 店铺 / FNSKU / 负责人),
-        the dates, and the ordered vs actually-received quantity and amount.
-        """
-        keys = row.keys()
-
-        def text(*candidates: Any) -> str:
-            for candidate in candidates:
-                if candidate not in (None, ""):
-                    return str(candidate).strip()
-            return ""
-
-        ordered_quantity = coerce_export_number(fields.get("实际采购量"))
-        if ordered_quantity is None and row["quantity"] not in (None, ""):
-            ordered_quantity = coerce_export_number(row["quantity"])
-        unit_price = coerce_export_number(fields.get("含税单价"))
-        if unit_price is None:
-            unit_price = coerce_export_number(fields.get("单价"))
-        received_quantity = (
-            coerce_export_number(row["received_quantity"])
-            if "received_quantity" in keys else None
-        ) or 0
-
-        def amount(quantity: Any) -> float | None:
-            if unit_price is None or quantity in (None, ""):
-                return None
-            return round(float(unit_price) * float(quantity), 2)
-
-        return {
-            "sku": text(
-                fields.get("SKU"),
-                row["product_model_code"] if "product_model_code" in keys else None,
-                row["part_code"] if "part_code" in keys else None,
-            ),
-            "productName": text(
-                row["product_model_name"] if "product_model_name" in keys else None,
-                fields.get("品名"),
-                row["part_name"] if "part_name" in keys else None,
-            ),
-            "shop": text(fields.get("店铺")),
-            "fnsku": text(fields.get("FNSKU")),
-            # 负责人: the account that placed the order, falling back to the
-            # 采购员 typed on the template.
-            "owner": text(row["created_by"], fields.get("采购员")),
-            "supplierName": text(
-                fields.get("供应商"),
-                row["supplier_name"] if "supplier_name" in keys else None,
-            ),
-            "orderedAt": row["created_at"],
-            "plannedArrivalAt": text(fields.get("预计到货时间")),
-            "actualArrivalAt": (
-                row["last_received_at"] if "last_received_at" in keys else None
-            ),
-            "unitPrice": float(unit_price) if unit_price is not None else None,
-            "orderedQuantity": (
-                float(ordered_quantity) if ordered_quantity is not None else None
-            ),
-            "receivedQuantity": float(received_quantity),
-            "orderAmount": amount(ordered_quantity),
-            "receivedAmount": amount(received_quantity),
-        }
-
-    def purchase_order_data(row: sqlite3.Row) -> dict[str, Any]:
-        keys = row.keys()
-        try:
-            fields = json.loads(row["fields_json"] or "{}") if "fields_json" in keys else {}
-        except (json.JSONDecodeError, TypeError):
-            fields = {}
-        if not isinstance(fields, dict):
-            fields = {}
-        return {
-            "summary": purchase_order_summary(row, fields),
-            "id": row["id"],
-            "poNo": row["po_no"],
-            "supplierId": row["supplier_id"],
-            "supplierCode": row["supplier_code"] if "supplier_code" in keys else None,
-            "supplierName": row["supplier_name"] if "supplier_name" in keys else None,
-            "supplierContact": row["supplier_contact"] if "supplier_contact" in keys else None,
-            "supplierPhone": row["supplier_phone"] if "supplier_phone" in keys else None,
-            "partTypeId": row["part_type_id"],
-            "partCode": row["part_code"] if "part_code" in keys else None,
-            "partName": row["part_name"] if "part_name" in keys else None,
-            "specification": row["specification"] if "specification" in keys else None,
-            "productModelId": row["product_model_id"] if "product_model_id" in keys else None,
-            "productModelCode": row["product_model_code"] if "product_model_code" in keys else None,
-            "productModelName": row["product_model_name"] if "product_model_name" in keys else None,
-            "quantity": row["quantity"],
-            "fields": fields,
-            "syncStatus": row["sync_status"],
-            "pushInProgress": bool(row["push_in_progress"]),
-            "lingxingPoId": row["lingxing_po_id"] or None,
-            "pushError": row["push_error"],
-            "createdBy": row["created_by"],
-            "createdByUserId": row["created_by_user_id"],
-            "createdAt": row["created_at"],
-            "pushedAt": row["pushed_at"],
-        }
 
     def inbound_receipt_row(database: sqlite3.Connection, receipt_id: int):
         return database.execute(
@@ -5164,507 +4959,19 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             "pushedAt": row["pushed_at"],
         }
 
-    def external_identifier(response: Any, *keys: str) -> str:
-        if not isinstance(response, dict):
-            return ""
-        containers = [response]
-        if isinstance(response.get("data"), dict):
-            containers.insert(0, response["data"])
-        for container in containers:
-            for key in keys:
-                value = container.get(key)
-                if value not in {None, ""}:
-                    return str(value)
-        return ""
 
-    def clean_purchase_order_fields(raw_fields: object) -> dict[str, Any]:
-        """Normalize the free-form template fields entered by operations.
 
-        Values are keyed by the export column name; unknown columns are dropped
-        so the stored payload always maps onto the export template. Numbers and
-        booleans are kept as-is; everything else is trimmed text capped at 500
-        characters.
-        """
-        fields: dict[str, Any] = {}
-        if raw_fields is None:
-            return fields
-        if not isinstance(raw_fields, dict):
-            raise ApiError("采购单字段格式无效")
-        for key, value in raw_fields.items():
-            column = str(key).strip()
-            if not column or column not in PURCHASE_ORDER_EXPORT_COLUMN_SET:
-                continue
-            if value is None:
-                fields[column] = ""
-            elif isinstance(value, (bool, int, float)):
-                fields[column] = value
-            else:
-                text = str(value).strip()
-                if len(text) > 500:
-                    raise ApiError(f"字段“{column}”内容不能超过 500 个字符")
-                fields[column] = text
-        return fields
 
-    def parse_purchase_order_input(
-        database: sqlite3.Connection, payload: dict[str, Any], actor_role: str
-    ) -> tuple[int | None, int | None, int | None, int | None, dict[str, Any]]:
-        """Validate and normalize purchase-order input shared by create/update.
 
-        Returns ``(product_model_id, supplier_id, part_type_id, quantity,
-        fields)``. Supplier / 商品 links are optional; operations may only link
-        products they created.
-        """
-        fields = clean_purchase_order_fields(payload.get("fields"))
 
-        product_model_id: int | None = None
-        raw_product = payload.get("productModelId")
-        if raw_product not in (None, ""):
-            product_model_id = business_id(raw_product, "产品")
-            product = database.execute(
-                "SELECT id, created_by_user_id FROM product_models WHERE id = ?",
-                (product_model_id,),
-            ).fetchone()
-            if not product:
-                raise ApiError("产品不存在", 404)
-            if actor_role == "OPERATIONS" and product["created_by_user_id"] != current_actor_id():
-                raise ApiError("只能选择自己创建的产品", 403)
 
-        supplier_id: int | None = None
-        raw_supplier = payload.get("supplierId")
-        if raw_supplier not in (None, ""):
-            supplier_id = business_id(raw_supplier, "供应商")
-            if not database.execute(
-                "SELECT id FROM suppliers WHERE id = ? AND active = 1", (supplier_id,)
-            ).fetchone():
-                raise ApiError("供应商不存在或已停用", 404)
-        part_type_id: int | None = None
-        raw_part = payload.get("partTypeId")
-        if raw_part not in (None, ""):
-            part_type_id = business_id(raw_part, "商品")
-            part = database.execute(
-                "SELECT id, supplier_id FROM part_types WHERE id = ? AND active = 1",
-                (part_type_id,),
-            ).fetchone()
-            if not part:
-                raise ApiError("商品不存在或已停用", 404)
-            if supplier_id is not None and int(part["supplier_id"]) != supplier_id:
-                raise ApiError("所选商品不属于该供应商", 409)
 
-        quantity: int | None = None
-        raw_quantity = payload.get("quantity")
-        if raw_quantity not in (None, ""):
-            quantity = business_quantity(raw_quantity, "采购数量")
-        if quantity is not None and "实际采购量" not in fields:
-            fields["实际采购量"] = quantity
 
-        return product_model_id, supplier_id, part_type_id, quantity, fields
 
-    @app.post("/api/purchase-orders")
-    def create_purchase_order():
-        return run_idempotent("purchase-orders.create", _impl_create_purchase_order)
 
-    def _impl_create_purchase_order():
-        # Operations fill the purchase-order template directly. Supplier / 商品
-        # links are optional; the product link is kept ("和产品挂钩") and every
-        # order records its creator (采购人).
-        require_operations()
-        payload = request.get_json(silent=True) or {}
-        database = get_db()
-        actor = current_user()
-        actor_role = actor["role"] if actor else ""
 
-        product_model_id, supplier_id, part_type_id, quantity, fields = (
-            parse_purchase_order_input(database, payload, actor_role)
-        )
 
-        if product_model_id is None and part_type_id is None and not fields:
-            raise ApiError("请选择产品并填写采购单信息")
 
-        timestamp = app.config["NOW_PROVIDER"]()
-        po_no = str(fields.get("采购单号") or "").strip() or (
-            f"PO-{re.sub(r'[^0-9]', '', timestamp)[:14]}-{new_event_id()[-8:]}"
-        )
-        fields["采购单号"] = po_no
-        database.execute("BEGIN IMMEDIATE")
-        try:
-            cursor = database.execute(
-                """
-                INSERT INTO purchase_orders(
-                    po_no, supplier_id, part_type_id, product_model_id, quantity,
-                    fields_json, sync_status, created_by, created_by_user_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)
-                """,
-                (
-                    po_no,
-                    supplier_id,
-                    part_type_id,
-                    product_model_id,
-                    quantity,
-                    json.dumps(fields, ensure_ascii=False),
-                    current_actor_name("系统管理员"),
-                    current_actor_id(),
-                    timestamp,
-                ),
-            )
-            record_audit_event(
-                database,
-                "PO_CREATED",
-                "PURCHASE_ORDER",
-                po_no,
-                payload={
-                    "productModelId": product_model_id,
-                    "supplierId": supplier_id,
-                    "partTypeId": part_type_id,
-                    "quantity": quantity,
-                    "syncStatus": "PENDING",
-                },
-                occurred_at=timestamp,
-            )
-            database.commit()
-        except sqlite3.IntegrityError as error:
-            database.rollback()
-            if "po_no" in str(error).lower():
-                raise ApiError("采购单号重复，请重试", 409) from error
-            raise
-        except Exception:
-            database.rollback()
-            raise
-        return success(purchase_order_data(purchase_order_row(database, cursor.lastrowid)), 201)
-
-    def query_purchase_orders() -> list[sqlite3.Row]:
-        # Shared list/export query. Read access is shared with warehouse so it
-        # can select a source order; operations only ever see their own orders.
-        clauses: list[str] = []
-        parameters: list[Any] = []
-        status = clean_text(request.args.get("syncStatus"), "同步状态", max_length=16).upper()
-        if status:
-            if status not in {"PENDING", "PUSHED", "FAILED"}:
-                raise ApiError("同步状态无效")
-            clauses.append("po.sync_status = ?")
-            parameters.append(status)
-        supplier_value = request.args.get("supplierId")
-        if supplier_value not in {None, ""}:
-            clauses.append("po.supplier_id = ?")
-            parameters.append(business_id(supplier_value, "供应商"))
-        range_from = clean_text(request.args.get("from"), "起始时间", max_length=64)
-        range_to = clean_text(request.args.get("to"), "结束时间", max_length=64)
-        if range_from and range_to and range_from > range_to:
-            raise ApiError("起始时间不能晚于结束时间")
-        if range_from:
-            clauses.append("po.created_at >= ?")
-            parameters.append(range_from)
-        if range_to:
-            clauses.append("po.created_at <= ?")
-            parameters.append(range_to)
-        actor = current_user()
-        if actor and actor["role"] == "OPERATIONS":
-            clauses.append("po.created_by_user_id = ?")
-            parameters.append(current_actor_id())
-        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        return get_db().execute(
-            f"""
-            SELECT po.*, s.supplier_code, s.name AS supplier_name,
-                   s.contact AS supplier_contact, s.phone AS supplier_phone,
-                   pt.part_code, pt.name AS part_name, pt.specification,
-                   pm.model_code AS product_model_code, pm.name AS product_model_name,
-                   (SELECT COALESCE(SUM(ir.quantity), 0) FROM inbound_receipts ir
-                     WHERE ir.purchase_order_id = po.id) AS received_quantity,
-                   (SELECT MAX(ir.received_at) FROM inbound_receipts ir
-                     WHERE ir.purchase_order_id = po.id) AS last_received_at
-            FROM purchase_orders po
-            LEFT JOIN suppliers s ON s.id = po.supplier_id
-            LEFT JOIN part_types pt ON pt.id = po.part_type_id
-            LEFT JOIN product_models pm ON pm.id = po.product_model_id
-            {where_clause}
-            ORDER BY po.created_at DESC, po.id DESC
-            """,
-            parameters,
-        ).fetchall()
-
-    @app.get("/api/purchase-orders")
-    def list_purchase_orders():
-        return success([purchase_order_data(row) for row in query_purchase_orders()])
-
-    @app.get("/api/purchase-orders/<int:purchase_order_id>")
-    def get_purchase_order(purchase_order_id: int):
-        row = purchase_order_row(get_db(), purchase_order_id)
-        if not row:
-            raise ApiError("采购订单不存在", 404)
-        return success(purchase_order_data(row))
-
-    @app.put("/api/purchase-orders/<int:purchase_order_id>")
-    def update_purchase_order(purchase_order_id: int):
-        # Operations may revise their own orders; admins may revise any. A
-        # PUSHED order is locked so the local record stays consistent with what
-        # was sent to Lingxing.
-        require_operations()
-        payload = request.get_json(silent=True) or {}
-        database = get_db()
-        actor = current_user()
-        actor_role = actor["role"] if actor else ""
-        existing = purchase_order_row(database, purchase_order_id)
-        if not existing:
-            raise ApiError("采购订单不存在", 404)
-        if actor_role == "OPERATIONS" and existing["created_by_user_id"] != current_actor_id():
-            raise ApiError("只能修改自己创建的采购订单", 403)
-        if existing["sync_status"] == "PUSHED":
-            raise ApiError("已推送的采购订单不可修改", 409)
-
-        product_model_id, supplier_id, part_type_id, quantity, fields = (
-            parse_purchase_order_input(database, payload, actor_role)
-        )
-        if product_model_id is None and part_type_id is None and not fields:
-            raise ApiError("请选择产品并填写采购单信息")
-        # The document number is immutable; keep the original po_no.
-        fields["采购单号"] = existing["po_no"]
-        # A revised order that previously failed to push returns to PENDING so it
-        # can be retried cleanly.
-        next_status = "PENDING" if existing["sync_status"] == "FAILED" else existing["sync_status"]
-        timestamp = app.config["NOW_PROVIDER"]()
-        database.execute("BEGIN IMMEDIATE")
-        try:
-            database.execute(
-                """
-                UPDATE purchase_orders
-                SET supplier_id = ?, part_type_id = ?, product_model_id = ?,
-                    quantity = ?, fields_json = ?, sync_status = ?,
-                    push_error = CASE WHEN ? = 'PENDING' THEN '' ELSE push_error END
-                WHERE id = ?
-                """,
-                (
-                    supplier_id,
-                    part_type_id,
-                    product_model_id,
-                    quantity,
-                    json.dumps(fields, ensure_ascii=False),
-                    next_status,
-                    next_status,
-                    purchase_order_id,
-                ),
-            )
-            record_audit_event(
-                database,
-                "PO_UPDATED",
-                "PURCHASE_ORDER",
-                existing["po_no"],
-                payload={
-                    "productModelId": product_model_id,
-                    "supplierId": supplier_id,
-                    "partTypeId": part_type_id,
-                    "quantity": quantity,
-                },
-                occurred_at=timestamp,
-            )
-            database.commit()
-        except Exception:
-            database.rollback()
-            raise
-        return success(purchase_order_data(purchase_order_row(database, purchase_order_id)))
-
-    @app.delete("/api/purchase-orders/<int:purchase_order_id>")
-    def delete_purchase_order(purchase_order_id: int):
-        require_operations()
-        database = get_db()
-        actor = current_user()
-        actor_role = actor["role"] if actor else ""
-        existing = purchase_order_row(database, purchase_order_id)
-        if not existing:
-            raise ApiError("采购订单不存在", 404)
-        if actor_role == "OPERATIONS" and existing["created_by_user_id"] != current_actor_id():
-            raise ApiError("只能删除自己创建的采购订单", 403)
-        referenced = database.execute(
-            """
-            SELECT (SELECT COUNT(*) FROM inbound_receipts WHERE purchase_order_id = ?)
-                 + (SELECT COUNT(*) FROM production_orders WHERE purchase_order_id = ?) AS n
-            """,
-            (purchase_order_id, purchase_order_id),
-        ).fetchone()["n"]
-        if referenced:
-            raise ApiError("该采购订单已被收货或生产订单引用，无法删除", 409)
-        database.execute("BEGIN IMMEDIATE")
-        try:
-            record_audit_event(
-                database,
-                "PO_DELETED",
-                "PURCHASE_ORDER",
-                existing["po_no"],
-                payload={"syncStatus": existing["sync_status"]},
-            )
-            database.execute(
-                "DELETE FROM purchase_orders WHERE id = ?", (purchase_order_id,)
-            )
-            database.commit()
-        except sqlite3.IntegrityError as error:
-            database.rollback()
-            raise ApiError("该采购订单已被其他数据引用，无法删除", 409) from error
-        except Exception:
-            database.rollback()
-            raise
-        return success({"id": purchase_order_id, "poNo": existing["po_no"]})
-
-    def purchase_order_lingxing_order_sn(
-        row: sqlite3.Row,
-        fields: dict[str, Any],
-        requested: object = None,
-    ) -> str:
-        """Resolve the Lingxing 采购单号 (``order_sn``) this local order maps to.
-
-        采购单下单 acts on an order that already exists in Lingxing, so the push
-        needs that order's number rather than any local id. Callers may pass it
-        explicitly; otherwise a previously recorded number is reused, then the
-        采购单号 typed on the template, and finally our own document number
-        (which is what the export writes into Lingxing).
-        """
-        for candidate in (
-            requested,
-            row["lingxing_po_id"] if "lingxing_po_id" in row.keys() else "",
-            fields.get("采购单号"),
-            row["po_no"],
-        ):
-            text = str(candidate or "").strip()
-            if not text:
-                continue
-            if len(text) > 64:
-                raise ApiError("领星采购单号不能超过 64 个字符")
-            return text
-        raise ApiError("缺少领星采购单号，无法执行采购单下单")
-
-    def push_purchase_order_record(
-        purchase_order_id: int,
-        requested_order_sn: object = None,
-    ) -> dict[str, Any]:
-        require_operations()
-        database = get_db()
-        row = purchase_order_row(database, purchase_order_id)
-        if not row:
-            raise ApiError("采购订单不存在", 404)
-        if row["sync_status"] == "PUSHED":
-            return {**purchase_order_data(row), "message": "该采购订单已推送"}
-        service = lingxing_service(database)
-        ensure_lingxing_operation_ready(service, "purchase_order")
-        try:
-            po_fields = json.loads(row["fields_json"] or "{}")
-        except (json.JSONDecodeError, TypeError):
-            po_fields = {}
-        if not isinstance(po_fields, dict):
-            po_fields = {}
-        # Resolved before the in-progress guard so a missing/invalid order_sn
-        # never leaves the record flagged as pushing.
-        order_sn = purchase_order_lingxing_order_sn(row, po_fields, requested_order_sn)
-        database.execute("BEGIN IMMEDIATE")
-        try:
-            current = database.execute(
-                "SELECT sync_status, push_in_progress, push_started_at "
-                "FROM purchase_orders WHERE id = ?",
-                (purchase_order_id,),
-            ).fetchone()
-            if current["sync_status"] == "PUSHED":
-                database.rollback()
-                return {**purchase_order_data(purchase_order_row(database, purchase_order_id)), "message": "该采购订单已推送"}
-            guard_started_at = app.config["NOW_PROVIDER"]()
-            if current["push_in_progress"] and not guard_is_stale(
-                current["push_started_at"], guard_started_at, PUSH_GUARD_TIMEOUT
-            ):
-                raise ApiError("采购订单推送正在进行中", 409)
-            # Stamping the start lets a later attempt recover an abandoned guard.
-            database.execute(
-                "UPDATE purchase_orders SET push_in_progress = 1, push_started_at = ? "
-                "WHERE id = ?",
-                (guard_started_at, purchase_order_id),
-            )
-            database.commit()
-        except Exception:
-            database.rollback()
-            raise
-
-        try:
-            # 采购单下单 (``setOrders``) moves an existing Lingxing purchase order
-            # from 待下单 to 待到货. It is keyed by the Lingxing 采购单号 and answers
-            # with an empty ``data`` list, so no object id comes back and the
-            # order_sn we sent is what we persist.
-            response = service.push("purchase_order", {"order_sn": [order_sn]})
-            lingxing_id = (
-                external_identifier(response, "poId", "purchaseOrderId", "order_sn", "id")
-                or order_sn
-            )
-            timestamp = app.config["NOW_PROVIDER"]()
-            database.execute("BEGIN IMMEDIATE")
-            database.execute(
-                """
-                UPDATE purchase_orders
-                SET sync_status = 'PUSHED', push_in_progress = 0,
-                    lingxing_po_id = ?, lingxing_raw_response = ?,
-                    push_error = '', pushed_at = ?
-                WHERE id = ?
-                """,
-                (lingxing_id, json.dumps(response, ensure_ascii=False), timestamp, purchase_order_id),
-            )
-            record_audit_event(
-                database,
-                "PO_PUSHED",
-                "PURCHASE_ORDER",
-                row["po_no"],
-                payload={
-                    "result": "PUSHED",
-                    "lingxingPoId": lingxing_id,
-                    "orderSn": order_sn,
-                },
-                occurred_at=timestamp,
-            )
-            database.commit()
-        except Exception as error:
-            database.rollback()
-            message = error.message if isinstance(error, LingxingError) else str(error)
-            timestamp = app.config["NOW_PROVIDER"]()
-            database.execute("BEGIN IMMEDIATE")
-            database.execute(
-                """
-                UPDATE purchase_orders
-                SET sync_status = 'FAILED', push_in_progress = 0, push_error = ?
-                WHERE id = ?
-                """,
-                (message, purchase_order_id),
-            )
-            record_audit_event(
-                database,
-                "PO_PUSH_FAILED",
-                "PURCHASE_ORDER",
-                row["po_no"],
-                reason=message,
-                payload={"result": "FAILED", "error": message},
-                occurred_at=timestamp,
-            )
-            database.commit()
-            if isinstance(error, (ApiError, LingxingError)):
-                raise
-            raise LingxingError(f"领星采购订单推送失败：{message}") from error
-        return {**purchase_order_data(purchase_order_row(database, purchase_order_id)), "message": "采购订单已推送"}
-
-    @app.post("/api/purchase-orders/<int:purchase_order_id>/push")
-    def push_purchase_order(purchase_order_id: int):
-        # ``orderSn`` lets operations name the Lingxing 采购单号 explicitly when it
-        # differs from our document number; omitted, it is resolved from the
-        # order itself.
-        payload = request.get_json(silent=True) or {}
-        return success(
-            push_purchase_order_record(purchase_order_id, payload.get("orderSn"))
-        )
-
-    @app.get("/api/purchase-orders/<int:purchase_order_id>/sync-status")
-    def purchase_order_sync_status(purchase_order_id: int):
-        require_operations()
-        row = purchase_order_row(get_db(), purchase_order_id)
-        if not row:
-            raise ApiError("采购订单不存在", 404)
-        return success(
-            {
-                "id": row["id"],
-                "syncStatus": row["sync_status"],
-                "lingxingId": row["lingxing_po_id"] or None,
-                "pushedAt": row["pushed_at"],
-                "pushError": row["push_error"],
-            }
-        )
 
     @app.post("/api/inbound-receipts")
     def create_inbound_receipt():
@@ -5976,78 +5283,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             }
         return progress
 
-    def purchase_order_planned_quantity(po: sqlite3.Row) -> int:
-        """Resolve how many units a purchase order plans to produce.
 
-        Free-form orders keep their quantity in the template field 实际采购量
-        rather than the legacy ``quantity`` column, so fall back to it (and
-        finally to 1) instead of inserting NULL into ``planned_quantity``.
-        """
-        candidates: list[Any] = []
-        keys = po.keys()
-        if "quantity" in keys:
-            candidates.append(po["quantity"])
-        if "fields_json" in keys:
-            try:
-                fields = json.loads(po["fields_json"] or "{}")
-            except (json.JSONDecodeError, TypeError):
-                fields = {}
-            if isinstance(fields, dict):
-                candidates.append(fields.get("实际采购量"))
-        for candidate in candidates:
-            if candidate in (None, ""):
-                continue
-            try:
-                quantity = int(float(str(candidate).strip()))
-            except (TypeError, ValueError):
-                continue
-            if 1 <= quantity <= 999999:
-                return quantity
-        return 1
-
-    def product_model_for_purchase_order(database: sqlite3.Connection, po: sqlite3.Row):
-        # Prefer the explicit product link when present; fall back to resolving
-        # the product via the legacy 商品(part) -> active trace plan mapping.
-        keys = po.keys()
-        product_model_id = po["product_model_id"] if "product_model_id" in keys else None
-        if product_model_id is not None:
-            # A BOM (trace plan) is optional: a product may be a complete,
-            # indivisible finished good. The plan is only carried onto the batch
-            # when it exists, so component-less products still get a production
-            # order and its unique QR code.
-            row = database.execute(
-                """
-                SELECT pm.*, (
-                    SELECT tp.id FROM trace_plans tp
-                    WHERE tp.product_model_id = pm.id AND tp.status = 'ACTIVE'
-                    ORDER BY tp.activated_at DESC, tp.id DESC LIMIT 1
-                ) AS trace_plan_id
-                FROM product_models pm
-                WHERE pm.id = ? AND pm.active = 1
-                """,
-                (product_model_id,),
-            ).fetchone()
-            if not row:
-                raise ApiError("采购订单关联的产品不存在或已停用", 409)
-            return row
-        if po["part_type_id"] is None:
-            raise ApiError("采购订单未关联可生产的产品", 409)
-        rows = database.execute(
-            """
-            SELECT DISTINCT pm.*, tp.id AS trace_plan_id
-            FROM trace_plan_slots slot
-            JOIN trace_plans tp ON tp.id = slot.trace_plan_id AND tp.status = 'ACTIVE'
-            JOIN product_models pm ON pm.id = tp.product_model_id AND pm.active = 1
-            WHERE slot.part_type_id = ?
-            ORDER BY tp.activated_at DESC, tp.id DESC
-            """,
-            (po["part_type_id"],),
-        ).fetchall()
-        if not rows:
-            raise ApiError("采购商品尚未关联可生产的产品型号与生产计划", 409)
-        if len({int(row["id"]) for row in rows}) > 1:
-            raise ApiError("采购商品关联了多个产品型号，请先明确产品生产计划", 409)
-        return rows[0]
 
     def generate_production_order_for_po(
         database: sqlite3.Connection,
@@ -6462,113 +5698,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             201,
         )
 
-    def purchase_order_export_values(row: sqlite3.Row) -> tuple[dict[str, Any], bool]:
-        """Build the exact template column -> value map for one purchase order.
 
-        Values come from what operations entered; legacy supplier/part-linked
-        orders still derive their classic defaults so historical exports are
-        unchanged. Returns ``(values, is_legacy_linked)`` and never raises, so
-        the batch export can include every order.
-        """
-        try:
-            stored_fields = json.loads(row["fields_json"] or "{}")
-        except (json.JSONDecodeError, TypeError):
-            stored_fields = {}
-        if not isinstance(stored_fields, dict):
-            stored_fields = {}
 
-        values: dict[str, Any] = dict.fromkeys(PURCHASE_ORDER_EXPORT_COLUMNS, "")
-        values["标识号"] = row["id"]
-        values["采购单号"] = row["po_no"]
-        values["采购方"] = "聚星同创仓库管理系统"
-        if row["created_by"]:
-            values["采购员"] = row["created_by"]
-
-        is_legacy_linked = row["part_type_id"] is not None or row["supplier_id"] is not None
-        if is_legacy_linked:
-            for key, derived in {
-                "供应商": row["supplier_name"],
-                "含税": "是",
-                "费用分配方式": "按数量",
-                "采购币种": "CNY",
-                "采购仓库": "默认仓库",
-                "SKU": row["part_code"],
-                "实际采购量": row["quantity"],
-                "含税单价": Decimal("1.00"),
-                "联系人": row["supplier_contact"],
-                "联系方式": row["supplier_phone"],
-                "产品备注": row["part_name"],
-            }.items():
-                if derived not in (None, ""):
-                    values[key] = derived
-        if row["product_model_name"] and not values.get("产品备注"):
-            values["产品备注"] = row["product_model_name"]
-
-        # Operator-entered template values take precedence over derived defaults.
-        for column, value in stored_fields.items():
-            if column not in values or value in (None, ""):
-                continue
-            if column in PURCHASE_ORDER_NUMERIC_COLUMNS:
-                number = coerce_export_number(value)
-                if number is not None:
-                    value = number
-            if column == "含税单价" and isinstance(value, (int, float)) and not isinstance(value, bool):
-                value = Decimal(str(value))
-            values[column] = value
-        return values, is_legacy_linked
-
-    @app.get("/api/purchase-orders/export")
-    def export_purchase_orders():
-        # Batch export: one workbook with every visible order as a row (operations
-        # see only their own). Uses the same filters as the list and is lenient so
-        # a single legacy order can never fail the whole file.
-        require_operations()
-        rows = query_purchase_orders()
-        table = [
-            [
-                purchase_order_export_values(row)[0][column]
-                for column in PURCHASE_ORDER_EXPORT_COLUMNS
-            ]
-            for row in rows
-        ]
-        workbook = build_traceability_xlsx(PURCHASE_ORDER_EXPORT_COLUMNS, table)
-        filename = f"采购订单_批量_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        return send_file(
-            BytesIO(workbook),
-            as_attachment=True,
-            download_name=filename,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
-    @app.get("/api/purchase-orders/<int:purchase_order_id>/export")
-    def export_purchase_order(purchase_order_id: int):
-        require_operations()
-        row = purchase_order_row(get_db(), purchase_order_id)
-        if not row:
-            raise ApiError("采购订单不存在", 404)
-        values, is_legacy_linked = purchase_order_export_values(row)
-
-        # Legacy supplier/part-linked orders still enforce their required columns
-        # so the historical export contract (and its rejection path) is preserved.
-        if is_legacy_linked:
-            required = [
-                "标识号", "供应商", "含税", "费用分配方式", "采购币种",
-                "采购仓库", "SKU", "实际采购量", "含税单价",
-            ]
-            missing = [name for name in required if values.get(name) in {None, ""}]
-            if missing:
-                raise ApiError(f"采购单缺少必填列：{', '.join(missing)}")
-
-        workbook = build_traceability_xlsx(
-            PURCHASE_ORDER_EXPORT_COLUMNS,
-            [[values[column] for column in PURCHASE_ORDER_EXPORT_COLUMNS]],
-        )
-        return send_file(
-            BytesIO(workbook),
-            as_attachment=True,
-            download_name=f"采购订单_{safe_archive_name(row['po_no'])}.xlsx",
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
 
     def upsert_app_setting(
         database: sqlite3.Connection,
@@ -6605,23 +5736,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     # Same reasoning for the per-record 领星 push guards (采购单 / 供应收货): a crash
     # between taking ``push_in_progress`` and clearing it would otherwise block that
     # single record from ever being pushed again.
-    PUSH_GUARD_TIMEOUT = timedelta(minutes=15)
 
-    def guard_is_stale(started_at: object, now: str, timeout: timedelta) -> bool:
-        """Whether an in-progress guard set at ``started_at`` may be taken over."""
-        try:
-            started = datetime.fromisoformat(str(started_at).replace("Z", "+00:00"))
-            current = datetime.fromisoformat(str(now).replace("Z", "+00:00"))
-        except (TypeError, ValueError):
-            # Without a usable start time we cannot prove the guard was abandoned,
-            # so keep blocking: losing concurrency protection is worse than a
-            # delayed retry. Guards stranded by a dead process are cleared
-            # deterministically at startup (see clear_abandoned_guards in db.py).
-            return False
-        if (started.tzinfo is None) != (current.tzinfo is None):
-            started = started.replace(tzinfo=None)
-            current = current.replace(tzinfo=None)
-        return current - started >= timeout
 
     def inventory_sync_settings(database: sqlite3.Connection) -> dict[str, str]:
         rows = database.execute(
@@ -7034,32 +6149,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             }
         )
 
-    @app.get("/api/purchase-orders/<int:purchase_order_id>/factory-progress")
-    def purchase_order_factory_progress(purchase_order_id: int):
-        require_operations()
-        database = get_db()
-        po = purchase_order_row(database, purchase_order_id)
-        if not po:
-            raise ApiError("采购订单不存在", 404)
-        row = database.execute(
-            """
-            SELECT pro.id AS production_order_id,
-                   COALESCE(SUM(isr.quantity), 0) AS latest_quantity
-            FROM production_orders pro
-            LEFT JOIN inbound_scan_records isr ON isr.production_order_id = pro.id
-            WHERE pro.purchase_order_id = ?
-            GROUP BY pro.id
-            """,
-            (purchase_order_id,),
-        ).fetchone()
-        return success(
-            {
-                "purchaseOrderId": purchase_order_id,
-                "productionOrderGenerated": bool(row),
-                "productionOrderId": row["production_order_id"] if row else None,
-                "latestQuantity": int(row["latest_quantity"]) if row else 0,
-            }
-        )
 
     # Blueprints are registered in one place so the full set of route modules is
     # visible without reading the whole factory. Each is a domain that no longer
@@ -7071,6 +6160,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.register_blueprint(suppliers_bp)
     app.register_blueprint(product_models_bp)
     app.register_blueprint(production_batches_bp)
+    app.register_blueprint(purchase_orders_bp)
 
     return app
 
