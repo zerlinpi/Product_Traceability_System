@@ -263,8 +263,9 @@
 | `api/production_batches.py` | 4 | `inventory.py`、`production.py` |
 | `api/purchase_orders.py` | 10 | `lingxing_writes.py`、`purchasing.py` |
 | `api/production_orders.py` | 5 | `quality.py`、`production_orders.py` |
+| `api/inbound_receipts.py` | 5 | `receipts.py` |
 
-`app.py`：8949 → 约 5820 行。
+`app.py`：8949 → 约 5600 行。
 
 ### 10.4 领域模块一览
 
@@ -273,6 +274,7 @@
 | `inventory.py` | 供应商库存扣减（不超卖的保证所在） |
 | `production.py` | **批次**追溯：整批登记、反向追溯到供应商批次 |
 | `production_orders.py` | **生产订单**：由采购订单开出的生产指令 |
+| `receipts.py` | 供应收货（入库收货）的读取与序列化 |
 | `purchasing.py` | 采购订单：规则、推送语义、48 列模板 |
 | `quality.py` | 质量放行门：批次能否入库 |
 | `lingxing_writes.py` | 领星推送管道（采购单/入库单/库存同步共用） |
@@ -281,6 +283,12 @@
 
 > `production.py` 与 `production_orders.py` 名字相近但**实体不同**：
 > 前者是**批次**，后者是**订单**。改其中一个前先确认改对了。
+>
+> 中文语境下还有一对容易混的：**供应收货**（`receipts.py`，`/api/inbound-receipts`，
+> 供应商部件到货并推领星）与**成品扫码入库**（`/api/scan-gun/*`，
+> 扫生产二维码让成品进入库存）。两者英文都叫 inbound，但业务完全不同，
+> 且**互不共用代码**——已用依赖分析确认过，因此是两个独立领域。
+>
 > 领域之间允许有真实依赖（`production_orders` → `purchasing`，
 > 因为生产订单由采购订单开出），但**不得成环**。
 

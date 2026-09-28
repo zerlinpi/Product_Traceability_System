@@ -37,6 +37,7 @@ from traceability.api.product_models import product_models_bp
 from traceability.api.production_batches import production_batches_bp
 from traceability.api.purchase_orders import purchase_orders_bp
 from traceability.api.production_orders import production_orders_bp
+from traceability.api.inbound_receipts import inbound_receipts_bp
 from traceability.ble_collector import BluetoothCollectionError
 from traceability.db import get_db, initialize_database
 from traceability.auth import (
@@ -56,9 +57,6 @@ from traceability.auth import (
 from traceability.audit_events import record_audit_event
 from traceability.capabilities import ROLE_WAREHOUSE, Capability
 from traceability.errors import ApiError
-from traceability.purchasing import (
-    purchase_order_row,
-)
 from traceability.production_orders import (
     production_order_data,
     production_order_progress_map,
@@ -72,11 +70,9 @@ from traceability.production import (
 from traceability.idempotent_http import run_idempotent
 from traceability.login_guard import LoginPolicy
 from traceability.lingxing_writes import (
-    PUSH_GUARD_TIMEOUT,
     LINGXING_ENDPOINT_SETTING_KEYS,
     LINGXING_TOKEN_CACHE,
     ensure_lingxing_operation_ready,
-    external_identifier,
     guard_is_stale,
     lingxing_service,
     merged_lingxing_endpoints,
@@ -4917,46 +4913,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
 
 
-    def inbound_receipt_row(database: sqlite3.Connection, receipt_id: int):
-        return database.execute(
-            """
-            SELECT ir.*, po.po_no, po.sync_status AS purchase_order_sync_status,
-                   po.lingxing_po_id, s.name AS supplier_name,
-                   pt.part_code, pt.name AS part_name,
-                   pm.name AS product_model_name
-            FROM inbound_receipts ir
-            JOIN purchase_orders po ON po.id = ir.purchase_order_id
-            LEFT JOIN suppliers s ON s.id = po.supplier_id
-            LEFT JOIN part_types pt ON pt.id = po.part_type_id
-            LEFT JOIN product_models pm ON pm.id = po.product_model_id
-            WHERE ir.id = ?
-            """,
-            (receipt_id,),
-        ).fetchone()
-
-    def inbound_receipt_data(row: sqlite3.Row) -> dict[str, Any]:
-        keys = row.keys()
-        part_name = row["part_name"]
-        if not part_name and "product_model_name" in keys:
-            part_name = row["product_model_name"]
-        return {
-            "id": row["id"],
-            "purchaseOrderId": row["purchase_order_id"],
-            "poNo": row["po_no"],
-            "supplierName": row["supplier_name"],
-            "partCode": row["part_code"],
-            "partName": part_name,
-            "quantity": row["quantity"],
-            "receiver": row["receiver"],
-            "receiverUserId": row["receiver_user_id"],
-            "receivedAt": row["received_at"],
-            "syncStatus": row["sync_status"],
-            "pushInProgress": bool(row["push_in_progress"]),
-            "lingxingInboundId": row["lingxing_inbound_id"] or None,
-            "pushError": row["push_error"],
-            "createdAt": row["created_at"],
-            "pushedAt": row["pushed_at"],
-        }
 
 
 
@@ -4972,194 +4928,11 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
 
 
-    @app.post("/api/inbound-receipts")
-    def create_inbound_receipt():
-        require_warehouse()
-        payload = request.get_json(silent=True) or {}
-        purchase_order_id = business_id(payload.get("purchaseOrderId"), "采购订单")
-        quantity = business_quantity(payload.get("quantity"), "入库数量")
-        database = get_db()
-        po = purchase_order_row(database, purchase_order_id)
-        if not po:
-            raise ApiError("采购订单不存在", 404)
-        timestamp = app.config["NOW_PROVIDER"]()
-        database.execute("BEGIN IMMEDIATE")
-        try:
-            cursor = database.execute(
-                """
-                INSERT INTO inbound_receipts(
-                    purchase_order_id, quantity, receiver, receiver_user_id,
-                    received_at, sync_status, created_at
-                ) VALUES (?, ?, ?, ?, ?, 'PENDING', ?)
-                """,
-                (
-                    purchase_order_id,
-                    quantity,
-                    current_actor_name("系统管理员"),
-                    current_actor_id(),
-                    timestamp,
-                    timestamp,
-                ),
-            )
-            record_audit_event(
-                database,
-                "INBOUND_RECEIVED",
-                "INBOUND_RECEIPT",
-                str(cursor.lastrowid),
-                related_object_code=po["po_no"],
-                payload={"purchaseOrderId": purchase_order_id, "quantity": quantity},
-                occurred_at=timestamp,
-            )
-            database.commit()
-        except Exception:
-            database.rollback()
-            raise
-        return success(inbound_receipt_data(inbound_receipt_row(database, cursor.lastrowid)), 201)
 
-    @app.get("/api/inbound-receipts")
-    def list_inbound_receipts():
-        # Operations needs read access in order to push receipts created by the
-        # warehouse. Mutating receipt creation remains warehouse-only.
-        rows = get_db().execute(
-            """
-            SELECT ir.*, po.po_no, po.sync_status AS purchase_order_sync_status,
-                   po.lingxing_po_id, s.name AS supplier_name,
-                   pt.part_code, pt.name AS part_name,
-                   pm.name AS product_model_name
-            FROM inbound_receipts ir
-            JOIN purchase_orders po ON po.id = ir.purchase_order_id
-            LEFT JOIN suppliers s ON s.id = po.supplier_id
-            LEFT JOIN part_types pt ON pt.id = po.part_type_id
-            LEFT JOIN product_models pm ON pm.id = po.product_model_id
-            ORDER BY ir.received_at DESC, ir.id DESC
-            """
-        ).fetchall()
-        return success([inbound_receipt_data(row) for row in rows])
 
-    @app.get("/api/inbound-receipts/<int:receipt_id>")
-    def get_inbound_receipt(receipt_id: int):
-        row = inbound_receipt_row(get_db(), receipt_id)
-        if not row:
-            raise ApiError("入库收货记录不存在", 404)
-        return success(inbound_receipt_data(row))
 
-    @app.post("/api/inbound-receipts/<int:receipt_id>/push")
-    def push_inbound_receipt(receipt_id: int):
-        require_operations()
-        database = get_db()
-        row = inbound_receipt_row(database, receipt_id)
-        if not row:
-            raise ApiError("入库收货记录不存在", 404)
-        if row["purchase_order_sync_status"] != "PUSHED":
-            raise ApiError("请先成功推送采购订单", 409)
-        if row["sync_status"] == "PUSHED":
-            return success({**inbound_receipt_data(row), "message": "该入库收货已推送"})
-        service = lingxing_service(database)
-        ensure_lingxing_operation_ready(service, "inbound_receipt")
-        database.execute("BEGIN IMMEDIATE")
-        try:
-            current = database.execute(
-                "SELECT sync_status, push_in_progress, push_started_at "
-                "FROM inbound_receipts WHERE id = ?",
-                (receipt_id,),
-            ).fetchone()
-            if current["sync_status"] == "PUSHED":
-                database.rollback()
-                return success({**inbound_receipt_data(inbound_receipt_row(database, receipt_id)), "message": "该入库收货已推送"})
-            guard_started_at = app.config["NOW_PROVIDER"]()
-            if current["push_in_progress"] and not guard_is_stale(
-                current["push_started_at"], guard_started_at, PUSH_GUARD_TIMEOUT
-            ):
-                raise ApiError("入库收货推送正在进行中", 409)
-            # Stamping the start lets a later attempt recover an abandoned guard.
-            database.execute(
-                "UPDATE inbound_receipts SET push_in_progress = 1, push_started_at = ? "
-                "WHERE id = ?",
-                (guard_started_at, receipt_id),
-            )
-            database.commit()
-        except Exception:
-            database.rollback()
-            raise
 
-        try:
-            response = service.push(
-                "inbound_receipt",
-                {
-                    "localId": row["id"],
-                    "purchaseOrderId": row["lingxing_po_id"],
-                    "quantity": row["quantity"],
-                },
-            )
-            lingxing_id = external_identifier(response, "inboundId", "receiptId", "id")
-            if not lingxing_id:
-                raise LingxingError("领星入库响应缺少对象标识")
-            timestamp = app.config["NOW_PROVIDER"]()
-            database.execute("BEGIN IMMEDIATE")
-            database.execute(
-                """
-                UPDATE inbound_receipts
-                SET sync_status = 'PUSHED', push_in_progress = 0,
-                    lingxing_inbound_id = ?, lingxing_raw_response = ?,
-                    push_error = '', pushed_at = ?
-                WHERE id = ?
-                """,
-                (lingxing_id, json.dumps(response, ensure_ascii=False), timestamp, receipt_id),
-            )
-            record_audit_event(
-                database,
-                "INBOUND_PUSHED",
-                "INBOUND_RECEIPT",
-                str(receipt_id),
-                related_object_code=row["po_no"],
-                payload={"result": "PUSHED", "lingxingInboundId": lingxing_id},
-                occurred_at=timestamp,
-            )
-            database.commit()
-        except Exception as error:
-            database.rollback()
-            message = error.message if isinstance(error, LingxingError) else str(error)
-            timestamp = app.config["NOW_PROVIDER"]()
-            database.execute("BEGIN IMMEDIATE")
-            database.execute(
-                """
-                UPDATE inbound_receipts
-                SET sync_status = 'FAILED', push_in_progress = 0, push_error = ?
-                WHERE id = ?
-                """,
-                (message, receipt_id),
-            )
-            record_audit_event(
-                database,
-                "INBOUND_PUSH_FAILED",
-                "INBOUND_RECEIPT",
-                str(receipt_id),
-                related_object_code=row["po_no"],
-                reason=message,
-                payload={"result": "FAILED", "error": message},
-                occurred_at=timestamp,
-            )
-            database.commit()
-            if isinstance(error, (ApiError, LingxingError)):
-                raise
-            raise LingxingError(f"领星入库推送失败：{message}") from error
-        return success({**inbound_receipt_data(inbound_receipt_row(database, receipt_id)), "message": "入库收货已推送"})
 
-    @app.get("/api/inbound-receipts/<int:receipt_id>/sync-status")
-    def inbound_receipt_sync_status(receipt_id: int):
-        require_operations()
-        row = inbound_receipt_row(get_db(), receipt_id)
-        if not row:
-            raise ApiError("入库收货记录不存在", 404)
-        return success(
-            {
-                "id": row["id"],
-                "syncStatus": row["sync_status"],
-                "lingxingId": row["lingxing_inbound_id"] or None,
-                "pushedAt": row["pushed_at"],
-                "pushError": row["push_error"],
-            }
-        )
 
 
 
@@ -5812,6 +5585,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.register_blueprint(production_batches_bp)
     app.register_blueprint(purchase_orders_bp)
     app.register_blueprint(production_orders_bp)
+    app.register_blueprint(inbound_receipts_bp)
 
     return app
 
