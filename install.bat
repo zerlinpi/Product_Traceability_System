@@ -19,14 +19,14 @@ if not defined BASE_PYTHON (
 )
 
 if not defined BASE_PYTHON (
-  echo [错误] 未找到 Python 3.11 或更高版本。
+  echo [错误] 未找到 Python 3.13。
   echo 请先从 https://www.python.org/downloads/windows/ 安装 Python。
   goto :failed
 )
 
-"%BASE_PYTHON%" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
+"%BASE_PYTHON%" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 13) else 1)"
 if errorlevel 1 (
-  echo [错误] 系统要求 Python 3.11 或更高版本。
+  echo [错误] 系统要求 Python 3.13 或更高版本。
   echo 当前 Python 路径: %BASE_PYTHON%
   goto :failed
 )

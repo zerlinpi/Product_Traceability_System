@@ -1,6 +1,9 @@
 # API 契约（真实基线）
 
-> 基线：共 **107 个路由**（`app.py` 100 个 + `traceability/auth.py` 7 个）。
+> 基线：共 **107 个路由**。路由分布在 `app.py`、`traceability/auth.py`
+> 与 `traceability/api/*.py` 的各个蓝图，**逐文件的条数以 `PERMISSION_MATRIX.md`
+> 的生成表为准**——本文档只钉总数，因为按领域拆分会让逐文件条数持续变化。
+> `tools/check_docs_consistency.py` 会校验这个总数。
 > 路由级权限见 `PERMISSION_MATRIX.md`。
 > 本文档描述**当前实际返回格式**，不是目标设计。
 

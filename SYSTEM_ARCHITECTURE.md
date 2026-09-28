@@ -201,7 +201,7 @@
 - `trace_records.status_reason`、`status_updated_at` 和 `status_updated_by_user_id` 均允许旧记录为空。
 - `PUT /api/records/{id}/status` 是管理员单条质量处理入口，`PUT /api/records/status/bulk` 支持最多 200 条记录同事务批量处理；`PUT /api/records/{id}` 支持仓管校对授权范围内的兼容记录，也支持管理员校对全部记录。
 - `GET /api/records` 兼容原有参数，并增加 `generationBatchId`、`dateFrom`、`dateTo` 作为可选筛选条件；不修改历史数据结构。
-- 数据库 `user_version` 当前为 21。v12 增加批次溯源，v13 增加领星采购 / 入库结构，v14 收敛三角色并增加设置、生产订单和成品库存，v15 重建采购单并加入产品关联，v16 放宽批次计划为可空，v17 增加外采标记与库存同步表，v18 补建热点索引，v19 增加推送守卫起始时间，v20 增加幂等键表，v21 将审计日志改为只追加哈希链。迁移不删除或重写历史二维码与溯源记录。完整迁移链见 `docs/DATA_MODEL.md`。
+- 数据库 `user_version` 当前为 22。v12 增加批次溯源，v13 增加领星采购 / 入库结构，v14 收敛三角色并增加设置、生产订单和成品库存，v15 重建采购单并加入产品关联，v16 放宽批次计划为可空，v17 增加外采标记与库存同步表，v18 补建热点索引，v19 增加推送守卫起始时间，v20 增加幂等键表，v21 将审计日志改为只追加哈希链，v22 增加登录失败计数表。迁移不删除或重写历史二维码与溯源记录。完整迁移链见 `docs/DATA_MODEL.md`。
 - 领星 OpenAPI 基础认证使用 AppID/AppSecret、官方 Token/Refresh Token 路径和 MD5 + AES-ECB 签名；采购单、入库和库存写入路径必须使用领星为当前企业实际开通的精确路径，不在系统中猜测或伪造端点。
 
 ## 10. 代码结构与分层
@@ -247,10 +247,10 @@
 | 1d | `audit_events.py`（审计写入，蓝图必需） | ✅ 已完成 |
 | 1e | `idempotent_http.py`（幂等请求包装，写接口蓝图必需） | ✅ 已完成 |
 | 1f | `lingxing_writes.py`（领星推送共享管道） | ✅ 已完成 |
-| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 🔄 进行中（8 个域已完成） |
-| 3 | 领域逻辑外移（库存、批次、采购） | 🔄 已起步 |
+| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 🔄 进行中（9 个域已完成） |
+| 3 | 领域逻辑外移（库存、批次、采购、生产订单、质量门） | 🔄 进行中 |
 
-已迁出的领域（共 31 条路由）：
+已迁出的领域（共 36 条路由）：
 
 | 蓝图 | 路由数 | 需先抽出的支撑模块 |
 | --- | --- | --- |
@@ -262,8 +262,27 @@
 | `api/product_models.py` | 4 | — |
 | `api/production_batches.py` | 4 | `inventory.py`、`production.py` |
 | `api/purchase_orders.py` | 10 | `lingxing_writes.py`、`purchasing.py` |
+| `api/production_orders.py` | 5 | `quality.py`、`production_orders.py` |
 
-`app.py`：8949 → 约 6173 行。
+`app.py`：8949 → 约 5820 行。
+
+### 10.4 领域模块一览
+
+| 模块 | 职责 |
+| --- | --- |
+| `inventory.py` | 供应商库存扣减（不超卖的保证所在） |
+| `production.py` | **批次**追溯：整批登记、反向追溯到供应商批次 |
+| `production_orders.py` | **生产订单**：由采购订单开出的生产指令 |
+| `purchasing.py` | 采购订单：规则、推送语义、48 列模板 |
+| `quality.py` | 质量放行门：批次能否入库 |
+| `lingxing_writes.py` | 领星推送管道（采购单/入库单/库存同步共用） |
+| `lingxing.py` | 领星 API 客户端（HTTP/签名/令牌/重试） |
+| `xlsx_export.py` | Excel 构造 |
+
+> `production.py` 与 `production_orders.py` 名字相近但**实体不同**：
+> 前者是**批次**，后者是**订单**。改其中一个前先确认改对了。
+> 领域之间允许有真实依赖（`production_orders` → `purchasing`，
+> 因为生产订单由采购订单开出），但**不得成环**。
 
 ### 10.5 顺序与「共享 helper」陷阱
 
@@ -285,6 +304,12 @@
 它们进了 `lingxing_writes.py`（推送管道）与 `validators.py`（入参校验），
 **不是** `purchasing.py`。判据是「谁在用」，不是「谁先用到」。
 
+生产订单搬迁时同理：`stock_in_block_reason` 与 `require_quality_release`
+被扫码枪入库和设置页共用 → `quality.py`；
+`production_order_row` / `production_order_data` / `production_order_progress_map`
+被扫码枪入库共用 → 留在 `production_orders.py`，由两边共同导入。
+**共用的 helper 不跟着某一个领域走，它跟着「用它的所有人」走。**
+
 ### 10.6 守卫必须留在 HTTP 层
 
 `tools/extract_routes.py` 通过**跟踪 `create_app` 内的调用图**解析守卫。
@@ -299,7 +324,23 @@
 每个阶段都由全量测试与 `tools/extract_routes.py --check`
 （路由与权限文档一致）共同守护。
 
-### 10.4 蓝图与权限门禁
+### 10.7 搬代码会静默解除故障注入测试的武装
+
+Python 的 `from X import y` 把名字**绑定到当前模块的命名空间**。
+把调用方搬走后，`monkeypatch.setattr(app, "y", ...)` **不再影响它**。
+
+症状很特别：**期待报错的测试返回了成功**。本项目已出现两次：
+
+| 测试 | 被打补丁的名字 | 搬迁后 |
+| --- | --- | --- |
+| `test_batch_generation` | `app.new_batch_code` | 期待 409，返回 201 |
+| `test_production_orders` | `app.record_audit_event` | 期待 500，返回 201 |
+
+**搬领域代码时必须搜索** `monkeypatch.setattr` / `patch.object`，
+把补丁目标改到**真正调用该函数的模块**。**断言不要动**——
+改断言是掩盖问题，改目标是修正问题。
+
+### 10.8 蓝图与权限门禁
 
 `tools/extract_routes.py` 生成 `docs/PERMISSION_MATRIX.md`，
 其 `SOURCES` **自动 glob `traceability/api/*.py`**，
@@ -315,6 +356,34 @@
 * **不得导入 `app`**——依赖单向，循环会破坏启动。
 * 不得直接读 `app.config`，需要时用 `flask.current_app`。
 * 移动路由**不得改变权限**。门禁每次构建都会比对生成的权限矩阵，变了就失败。
+
+### 10.9 文档一致性门禁
+
+`docs/PERMISSION_MATRIX.md` 是**生成的**，所以不会漂移。
+其余文档都是手写的——**而它们在本次重构中确实漂移了**：
+
+| 文档 | 曾声称 | 实际 |
+| --- | --- | --- |
+| `SYSTEM_ARCHITECTURE.md` | `user_version` 当前为 21 | v22 已发布 |
+| `docs/API_CONTRACT.md` | `app.py` 100 + `auth.py` 7 | 9 个蓝图已迁出 |
+| `docs/SECURITY.md` | systemd 沙箱尚未启用 | `PrivateTmp`/`NoNewPrivileges` 已启用 |
+| `README.md` | Python 3.11+ | CI 只测 3.13 |
+| `docs/UPGRADE.md` | `SECURITY.md` 尚未编写 | 早已存在 |
+
+`tools/check_docs_consistency.py` 在 CI 中校验这些值**与代码一致**，
+并已加入 `tests/test_docs_consistency.py` —— 该测试**逐项注入漂移并断言检查器会发现**，
+而不是只断言「在真实仓库上通过」。**一个永远通过的检查器比没有检查器更糟**：
+它把绿灯变成一个没人验证过的承诺。
+
+校验项：数据库版本、路由总数、蓝图是否都被扫描、角色集合、
+Python 支持版本（`pyproject` ↔ CI ↔ README ↔ `install.bat` 四方一致）、
+正式前端入口、关键文档是否存在。
+
+> **只钉总数，不钉逐文件条数**：按领域拆分会让 `app.py` 的路由数持续变化，
+> 把它写进文档就是制造下一次漂移。
+>
+> **Python 版本只支持 3.13**：CI 只在该版本验证。若要放开到 3.11/3.12，
+> 必须先把它们加进 CI matrix 并通过——**不得宣称未测试的版本受支持**。
 
 ## 11. 后续兼容路线
 

@@ -1,3 +1,13 @@
+# The Python versions this project is actually verified against.
+#
+# CI runs exactly these (`.github/workflows/ci.yml`), ruff targets py313, and
+# README + install.bat must agree. Before this section existed the README claimed
+# "3.11 or higher" while CI only ever ran 3.13 — an untested version being
+# advertised as supported. Declaring a version here without adding it to the CI
+# matrix is precisely the drift `tools/check_docs_consistency.py` fails on.
+[tool.pts]
+supported-python = ["3.13"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # `-ra` prints a summary of non-passing and skipped tests at the end, which is

@@ -243,7 +243,7 @@ if operator_id is not None and row["completed_by_user_id"] != operator_id:
 
 | 缺口 | 状态 |
 | --- | --- |
-| systemd 沙箱指令（`ProtectSystem` / `NoNewPrivileges` / `PrivateTmp` 等）尚未启用 | 待处理（第十九目标） |
+| systemd 沙箱：`PrivateTmp` 与 `NoNewPrivileges` **已启用**（见 `deploy/systemd/product-traceability.service`）；`ProtectSystem` / `ProtectHome` / `PrivateDevices` / `RestrictAddressFamilies` 等**尚未启用** | 部分完成（第十九目标） |
 | `X-Forwarded-*` 头未做可信代理校验 | 待处理 |
 | 无 HSTS / 上传大小 / 请求限流配置 | 待处理 |
 | 响应安全头仅 `nosniff` / `SAMEORIGIN` / `Referrer-Policy`，无 CSP | 待处理 |

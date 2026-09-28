@@ -132,7 +132,15 @@ TABLE-A-20260718-0003
 
 ## 本地安装和启动
 
-要求 Windows 和 Python 3.11 或更高版本。
+要求 Windows 和 **Python 3.13**。
+
+> **为什么只支持 3.13**：CI 只在该版本上验证（`.github/workflows/ci.yml` 的
+> `python-version: "3.13"`），`ruff` 的 `target-version` 也是 `py313`，
+> `pyproject.toml` 的 `requires-python` 为 `>=3.13`。
+> 在此之前 README 声称「3.11 或更高」，而 3.11 / 3.12 **从未被测试过**——
+> 宣称未验证的版本受支持，等于把风险留给现场。若要放开到 3.11/3.12，
+> 必须先把它们加进 CI matrix 并确保通过。
+> `tools/check_docs_consistency.py` 会校验 README 与 CI 的版本声明一致。
 
 1. 双击 `install.bat`。脚本会在本目录创建 `.venv`，不会污染其他项目。
 2. 双击 `start.bat`。若环境不存在或缺少依赖，启动脚本会自动修复。

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import app as app_module
 
 from test_inbound_receipts import create_order
 from test_purchase_orders import setup_case
+from traceability import production_orders as production_orders_module
 from traceability.codes import parse_batch_payload
 from traceability.db import connect_database
 
@@ -55,14 +55,21 @@ def test_production_order_transaction_rolls_back_orphan_batch_on_failure(
 ):
     client, database_path, scenario, _fake = setup_case(tmp_path)
     order = create_order(client, scenario)
-    original = app_module.record_audit_event
+    # Patched on the module that calls it, not on ``app``: the production-order
+    # domain moved into traceability/production_orders.py, and a module holds its
+    # own binding for an imported name, so patching app.record_audit_event would
+    # no longer reach the call site. The symptom would be this test returning 201
+    # where it expects 500 — a fault-injection test that silently stops injecting.
+    original = production_orders_module.record_audit_event
 
     def fail_on_production(database, event_type, *args, **kwargs):
         if event_type == "PRODUCTION_ORDER_CREATED":
             raise RuntimeError("injected production failure")
         return original(database, event_type, *args, **kwargs)
 
-    monkeypatch.setattr(app_module, "record_audit_event", fail_on_production)
+    monkeypatch.setattr(
+        production_orders_module, "record_audit_event", fail_on_production
+    )
     response = client.post(
         "/api/production-orders", json={"purchaseOrderId": order["id"]}
     )

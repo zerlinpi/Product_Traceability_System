@@ -301,6 +301,29 @@ def _impl_scan_gun_inbound():
 下次服务启动会自动执行 v19（为 `purchase_orders` / `inbound_receipts` 增加
 `push_started_at` 列）。v19 为纯增量迁移，不影响既有数据。
 
+### D9 — `Writes` 列对已迁入领域模块的写路由漏报
+
+`tools/extract_routes.py` 的调用图**按文件解析**：它把 `app.py`（4 空格层）
+与 `traceability/api/*.py`（0 空格层）各自的函数体纳入解析，
+但**不跨文件跟随**到 `traceability/*.py` 的领域模块。
+
+因此写操作一旦被搬进领域模块，路由的调用图里就不再出现
+`BEGIN IMMEDIATE` / `INSERT INTO`，`Writes` 列会误报为空。
+**当前受影响的行**：
+
+| Method | Path | 实际 | 文档显示 |
+| --- | --- | --- | --- |
+| `POST` | `/api/production-orders` | 写入 | 空 |
+| `POST` | `/api/production-orders/batch` | 写入 | 空 |
+
+**这不影响 `Effective access`** —— 守卫已上移到路由层（见下方「守卫必须留在
+HTTP 层」），权限列经逐行比对确认未变。受影响的只是「是否写操作」这一信息列。
+
+> **这不是一次性问题**：每把一个写领域搬进独立模块，漏报就扩大一分。
+> 修法是让提取器**跨文件跟随调用图**，但那属于安全门禁工具自身的改造，
+> 需要独立提交、独立验证——**不应混在「搬路由」的改动里**。
+> 同时改路由与门禁工具，一旦权限列出现意外变化，就无法判断是哪一侧造成的。
+
 ---
 
 ## 4. 完整路由表（生成）
@@ -367,10 +390,10 @@ def _impl_scan_gun_inbound():
 | `GET` | `/api/production-batches/<int:batch_id>` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-batches/<int:batch_id>/qr` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-orders` | ADMIN + WAREHOUSE |  | handler |  |
-| `POST` | `/api/production-orders` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_order, generate_production_order_for_po, produ | yes |
+| `POST` | `/api/production-orders` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_order |  |
 | `GET` | `/api/production-orders/<int:production_order_id>` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
 | `GET` | `/api/production-orders/<int:production_order_id>/qr` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
-| `POST` | `/api/production-orders/batch` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_orders_batch, generate_production_order_for_po | yes |
+| `POST` | `/api/production-orders/batch` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_orders_batch |  |
 | `GET` | `/api/products` | any authenticated |  | handler |  |
 | `POST` | `/api/products` | ADMIN + OPERATIONS |  | handler | yes |
 | `PUT` | `/api/products/<int:product_model_id>` | ADMIN + OPERATIONS |  | handler | yes |
@@ -393,7 +416,7 @@ def _impl_scan_gun_inbound():
 | `GET` | `/api/records/export.xlsx` | any authenticated |  | handler |  |
 | `PUT` | `/api/records/status/bulk` | ADMIN |  | handler | yes |
 | `POST` | `/api/scan` | ADMIN + WAREHOUSE scope:product+scope:supplier(NOOP) | `LEGACY_SCAN` | handler | yes |
-| `POST` | `/api/scan-gun/inbound` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_scan_gun_inbound, production_order_row, stock_in_block_reason | yes |
+| `POST` | `/api/scan-gun/inbound` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_scan_gun_inbound | yes |
 | `POST` | `/api/scan-gun/lookup` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
 | `POST` | `/api/scan/reset` | any authenticated |  | handler | yes |
 | `GET` | `/api/scan/session` | any authenticated |  | handler |  |

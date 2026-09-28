@@ -20,7 +20,6 @@ from traceability.codes import (
     batch_identification_code,
     machine_identification_code,
     make_qr_svg,
-    new_batch_code,
     new_label_batch_code,
     new_part_identification_code,
     new_trace_number,
@@ -37,6 +36,7 @@ from traceability.api.suppliers import suppliers_bp
 from traceability.api.product_models import product_models_bp
 from traceability.api.production_batches import production_batches_bp
 from traceability.api.purchase_orders import purchase_orders_bp
+from traceability.api.production_orders import production_orders_bp
 from traceability.ble_collector import BluetoothCollectionError
 from traceability.db import get_db, initialize_database
 from traceability.auth import (
@@ -57,10 +57,14 @@ from traceability.audit_events import record_audit_event
 from traceability.capabilities import ROLE_WAREHOUSE, Capability
 from traceability.errors import ApiError
 from traceability.purchasing import (
-    product_model_for_purchase_order,
-    purchase_order_planned_quantity,
     purchase_order_row,
 )
+from traceability.production_orders import (
+    production_order_data,
+    production_order_progress_map,
+    production_order_row,
+)
+from traceability.quality import require_quality_release, stock_in_block_reason
 from traceability.production import (
     production_batch_registration,
     production_batch_reverse_trace,
@@ -300,11 +304,6 @@ def clean_lingxing_endpoint(value: object, label: str) -> str:
     return text
 
 
-def require_quality_release(database: sqlite3.Connection) -> bool:
-    row = database.execute(
-        "SELECT setting_value FROM system_settings WHERE setting_key = 'require_quality_release'"
-    ).fetchone()
-    return parse_bool(row["setting_value"] if row else "0")
 
 
 
@@ -5162,368 +5161,19 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             }
         )
 
-    def production_order_row(database: sqlite3.Connection, production_order_id: int):
-        return database.execute(
-            """
-            SELECT pro.*, po.po_no, po.quantity, po.part_type_id,
-                   pb.batch_code, pb.product_model_id, pb.planned_quantity,
-                   pb.prefix, pb.generated_at,
-                   pm.model_code, pm.name AS product_name
-            FROM production_orders pro
-            JOIN purchase_orders po ON po.id = pro.purchase_order_id
-            JOIN production_batches pb ON pb.id = pro.production_batch_id
-            JOIN product_models pm ON pm.id = pb.product_model_id
-            WHERE pro.id = ?
-            """,
-            (production_order_id,),
-        ).fetchone()
-
-    def production_order_data(row: sqlite3.Row) -> dict[str, Any]:
-        return {
-            "id": row["id"],
-            "purchaseOrderId": row["purchase_order_id"],
-            "poNo": row["po_no"],
-            "productionBatchId": row["production_batch_id"],
-            "productionQrCode": row["batch_code"],
-            "identificationCode": batch_identification_code(row["batch_code"]),
-            "productModelId": row["product_model_id"],
-            "productModelCode": row["model_code"],
-            "productName": row["product_name"],
-            "quantity": row["planned_quantity"],
-            "isExternal": bool(row["is_external"]) if "is_external" in row.keys() else False,
-            "createdBy": row["created_by"],
-            "createdByUserId": row["created_by_user_id"],
-            "createdAt": row["created_at"],
-            "downloadUrl": f"/api/production-orders/{row['id']}/qr",
-            "products": [
-                {
-                    "productModelId": row["product_model_id"],
-                    "modelCode": row["model_code"],
-                    "name": row["product_name"],
-                    "quantity": row["planned_quantity"],
-                }
-            ],
-        }
-
-    def stock_in_block_reason(quality_status: str | None, gate: bool) -> str | None:
-        """Why 扫码枪入库 must be refused for a batch, or ``None`` when allowed.
-
-        Closes the gap where the 批次质量处理 step had no effect on the flow: a
-        暂扣 (HOLD) batch must never enter finished-goods stock. When the
-        质量放行 setting is on, the batch additionally has to be registered and
-        released (PASSED) first — the same intent the legacy per-unit flow had.
-        ``quality_status`` is ``None`` for a batch that was never registered.
-        """
-        if quality_status == "HOLD":
-            return "该批次已暂扣，解除暂扣后才能入库"
-        if gate:
-            if quality_status is None:
-                return "已开启质量放行：请先完成批次登记并放行后再入库"
-            if quality_status != "PASSED":
-                return "已开启质量放行：该批次需质量合格放行后才能入库"
-        return None
-
-    def production_order_progress_map(
-        database: sqlite3.Connection, orders: list[sqlite3.Row]
-    ) -> dict[int, dict[str, Any]]:
-        """Flow state per production order: 登记 → 质量 → 入库.
-
-        Resolves the batch registration/quality status and the cumulative
-        received quantity for every order in a fixed number of queries, so the
-        warehouse can see which step each order is on (and why a stock-in is
-        refused) instead of discovering it only on scan.
-        """
-        if not orders:
-            return {}
-        batch_ids = [row["production_batch_id"] for row in orders]
-        order_ids = [row["id"] for row in orders]
-        registrations = {
-            r["production_batch_id"]: r
-            for r in database.execute(
-                f"""
-                SELECT production_batch_id, registered_quantity, quality_status
-                FROM batch_trace_records
-                WHERE production_batch_id IN ({",".join("?" for _ in batch_ids)})
-                """,
-                batch_ids,
-            ).fetchall()
-        }
-        received = {
-            r["production_order_id"]: r["total"] or 0
-            for r in database.execute(
-                f"""
-                SELECT production_order_id, SUM(quantity) AS total
-                FROM inbound_scan_records
-                WHERE production_order_id IN ({",".join("?" for _ in order_ids)})
-                GROUP BY production_order_id
-                """,
-                order_ids,
-            ).fetchall()
-        }
-        gate = require_quality_release(database)
-        progress: dict[int, dict[str, Any]] = {}
-        for row in orders:
-            registration = registrations.get(row["production_batch_id"])
-            quality_status = registration["quality_status"] if registration else None
-            planned = row["planned_quantity"] or 0
-            received_quantity = received.get(row["id"], 0)
-            blocked = stock_in_block_reason(quality_status, gate)
-            progress[row["id"]] = {
-                "registered": registration is not None,
-                "registeredQuantity": (
-                    registration["registered_quantity"] if registration else None
-                ),
-                "qualityStatus": quality_status,
-                "receivedQuantity": received_quantity,
-                "remainingQuantity": max(planned - received_quantity, 0),
-                "fullyReceived": planned > 0 and received_quantity >= planned,
-                "qualityReleaseRequired": gate,
-                "canStockIn": blocked is None,
-                "stockInBlockedReason": blocked,
-            }
-        return progress
 
 
 
-    def generate_production_order_for_po(
-        database: sqlite3.Connection,
-        po: sqlite3.Row,
-        *,
-        external: bool,
-        timestamp: str,
-    ) -> int:
-        """Create a production batch + order (minting the batch QR) for one PO.
 
-        Resolves the linked product (BOM optional), mints a unique batch code and
-        inserts the batch and the production order in a single ``BEGIN IMMEDIATE``
-        transaction. ``external`` marks the order as 外采 (externally procured) —
-        the trace code is still minted so downstream inbound / stock stays
-        uniform. Returns the new production order id. The caller is responsible
-        for the "already generated" pre-check; a concurrent duplicate still
-        raises a 409 via the ``purchase_order_id`` unique constraint.
-        """
-        product = product_model_for_purchase_order(database, po)
-        require_product_model_access(product["id"])
-        planned_quantity = purchase_order_planned_quantity(po)
-        try:
-            date_code = datetime.fromisoformat(timestamp.replace("Z", "+00:00")).strftime("%Y%m%d")
-        except ValueError:
-            date_code = datetime.now().astimezone().strftime("%Y%m%d")
-        prefix = normalize_entity_code(product["serial_prefix"] or product["model_code"], "生产二维码前缀")
-        batch_code = new_batch_code(date_code, prefix)
-        database.execute("BEGIN IMMEDIATE")
-        try:
-            batch_cursor = database.execute(
-                """
-                INSERT INTO production_batches(
-                    batch_code, product_model_id, trace_plan_id, prefix,
-                    planned_quantity, generated_by, generated_by_user_id, generated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    batch_code,
-                    product["id"],
-                    product["trace_plan_id"],
-                    prefix,
-                    planned_quantity,
-                    current_actor_name("系统管理员"),
-                    current_actor_id(),
-                    timestamp,
-                ),
-            )
-            order_cursor = database.execute(
-                """
-                INSERT INTO production_orders(
-                    purchase_order_id, production_batch_id, is_external,
-                    created_by, created_by_user_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    po["id"],
-                    batch_cursor.lastrowid,
-                    1 if external else 0,
-                    current_actor_name("系统管理员"),
-                    current_actor_id(),
-                    timestamp,
-                ),
-            )
-            record_audit_event(
-                database,
-                "PRODUCTION_ORDER_CREATED",
-                "PRODUCTION_ORDER",
-                str(order_cursor.lastrowid),
-                related_object_code=po["po_no"],
-                payload={
-                    "purchaseOrderId": po["id"],
-                    "productionBatchId": batch_cursor.lastrowid,
-                    "batchCode": batch_code,
-                    "productModelId": product["id"],
-                    "quantity": planned_quantity,
-                    "isExternal": bool(external),
-                },
-                occurred_at=timestamp,
-            )
-            database.commit()
-        except sqlite3.IntegrityError as error:
-            database.rollback()
-            if "production_orders.purchase_order_id" in str(error):
-                raise ApiError("该采购订单已生成生产订单", 409) from error
-            raise
-        except Exception:
-            database.rollback()
-            raise
-        return order_cursor.lastrowid
 
-    @app.post("/api/production-orders")
-    def create_production_order():
-        return run_idempotent("production-orders.create", _impl_create_production_order)
 
-    def _impl_create_production_order():
-        require_admin_or_warehouse()
-        payload = request.get_json(silent=True) or {}
-        purchase_order_id = business_id(payload.get("purchaseOrderId"), "采购订单")
-        external = bool(payload.get("external"))
-        database = get_db()
-        po = purchase_order_row(database, purchase_order_id)
-        if not po:
-            raise ApiError("采购订单不存在", 404)
-        existing = database.execute(
-            "SELECT id FROM production_orders WHERE purchase_order_id = ?",
-            (purchase_order_id,),
-        ).fetchone()
-        if existing:
-            raise ApiError("该采购订单已生成生产订单", 409)
-        timestamp = app.config["NOW_PROVIDER"]()
-        order_id = generate_production_order_for_po(
-            database, po, external=external, timestamp=timestamp
-        )
-        return success(production_order_data(production_order_row(database, order_id)), 201)
 
-    @app.post("/api/production-orders/batch")
-    def create_production_orders_batch():
-        return run_idempotent("production-orders.batch", _impl_create_production_orders_batch)
 
-    def _impl_create_production_orders_batch():
-        # Warehouse batch-generates production orders (each minting its trace/QR
-        # code) from the purchase orders operations submitted. Each PO is handled
-        # in its own transaction so one failure does not abort the rest; orders
-        # that already exist are reported as skipped rather than erroring.
-        require_admin_or_warehouse()
-        payload = request.get_json(silent=True) or {}
-        raw_ids = payload.get("purchaseOrderIds")
-        if not isinstance(raw_ids, list) or not raw_ids:
-            raise ApiError("请选择至少一个采购订单")
-        external = bool(payload.get("external"))
-        database = get_db()
-        timestamp = app.config["NOW_PROVIDER"]()
-        created: list[dict[str, Any]] = []
-        skipped: list[dict[str, Any]] = []
-        failed: list[dict[str, Any]] = []
-        seen: set[int] = set()
-        for raw in raw_ids:
-            try:
-                po_id = business_id(raw, "采购订单")
-            except ApiError as error:
-                failed.append({"purchaseOrderId": raw, "message": error.message})
-                continue
-            if po_id in seen:
-                continue
-            seen.add(po_id)
-            po = purchase_order_row(database, po_id)
-            if not po:
-                failed.append({"purchaseOrderId": po_id, "message": "采购订单不存在"})
-                continue
-            existing = database.execute(
-                "SELECT id FROM production_orders WHERE purchase_order_id = ?",
-                (po_id,),
-            ).fetchone()
-            if existing:
-                skipped.append(
-                    {
-                        "purchaseOrderId": po_id,
-                        "poNo": po["po_no"],
-                        "productionOrderId": existing["id"],
-                    }
-                )
-                continue
-            try:
-                order_id = generate_production_order_for_po(
-                    database, po, external=external, timestamp=timestamp
-                )
-            except ApiError as error:
-                failed.append(
-                    {"purchaseOrderId": po_id, "poNo": po["po_no"], "message": error.message}
-                )
-                continue
-            created.append(
-                production_order_data(production_order_row(database, order_id))
-            )
-        return success(
-            {"created": created, "skipped": skipped, "failed": failed}, 201
-        )
 
-    @app.get("/api/production-orders")
-    def list_production_orders():
-        require_admin_or_warehouse()
-        clauses: list[str] = []
-        parameters: list[Any] = []
-        po_value = request.args.get("purchaseOrderId")
-        if po_value not in {None, ""}:
-            clauses.append("pro.purchase_order_id = ?")
-            parameters.append(business_id(po_value, "采购订单"))
-        operator_id = current_operator_id()
-        if operator_id is not None:
-            clauses.append(
-                "EXISTS (SELECT 1 FROM user_product_model_permissions upp "
-                "WHERE upp.user_id = ? AND upp.product_model_id = pb.product_model_id)"
-            )
-            parameters.append(operator_id)
-        where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        database = get_db()
-        rows = database.execute(
-            f"""
-            SELECT pro.*, po.po_no, po.quantity, po.part_type_id,
-                   pb.batch_code, pb.product_model_id, pb.planned_quantity,
-                   pb.prefix, pb.generated_at, pm.model_code, pm.name AS product_name
-            FROM production_orders pro
-            JOIN purchase_orders po ON po.id = pro.purchase_order_id
-            JOIN production_batches pb ON pb.id = pro.production_batch_id
-            JOIN product_models pm ON pm.id = pb.product_model_id
-            {where_clause}
-            ORDER BY pro.created_at DESC, pro.id DESC
-            """,
-            parameters,
-        ).fetchall()
-        # Batched flow state (登记/质量/已入库) so the list shows where each order
-        # stands without an extra query per row.
-        progress = production_order_progress_map(database, list(rows))
-        return success(
-            [
-                {**production_order_data(row), "progress": progress.get(row["id"], {})}
-                for row in rows
-            ]
-        )
 
-    @app.get("/api/production-orders/<int:production_order_id>")
-    def get_production_order(production_order_id: int):
-        require_admin_or_warehouse()
-        row = production_order_row(get_db(), production_order_id)
-        if not row:
-            raise ApiError("生产订单不存在", 404)
-        require_product_model_access(row["product_model_id"])
-        return success(production_order_data(row))
 
-    @app.get("/api/production-orders/<int:production_order_id>/qr")
-    def production_order_qr(production_order_id: int):
-        require_admin_or_warehouse()
-        row = production_order_row(get_db(), production_order_id)
-        if not row:
-            raise ApiError("生产订单不存在", 404)
-        require_product_model_access(row["product_model_id"])
-        return Response(
-            make_qr_svg(batch_identification_code(row["batch_code"])),
-            mimetype="image/svg+xml",
-        )
+
+
 
     @app.post("/api/scan-gun/lookup")
     def scan_gun_lookup():
@@ -6161,6 +5811,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app.register_blueprint(product_models_bp)
     app.register_blueprint(production_batches_bp)
     app.register_blueprint(purchase_orders_bp)
+    app.register_blueprint(production_orders_bp)
 
     return app
 

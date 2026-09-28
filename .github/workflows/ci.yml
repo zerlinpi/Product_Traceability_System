@@ -52,6 +52,30 @@ jobs:
       - name: Verify docs/PERMISSION_MATRIX.md
         run: python tools/extract_routes.py --check
 
+  docs-consistency:
+    name: Docs match the code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      # PERMISSION_MATRIX.md is generated and cannot drift. Everything else is
+      # hand-written and did drift during the blueprint refactor: the architecture
+      # doc still said user_version 21 after v22 shipped, API_CONTRACT still split
+      # the route count as "app.py 100 + auth.py 7" after nine blueprints moved
+      # out, SECURITY called the systemd sandbox unenabled when it was already on,
+      # and the README advertised Python 3.11+ while CI only ran 3.13.
+      #
+      # Each is cheap to fix and expensive to miss, so it fails the build now.
+      - name: Verify docs describe the current system
+        run: python tools/check_docs_consistency.py
+
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
