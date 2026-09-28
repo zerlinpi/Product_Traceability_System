@@ -247,10 +247,10 @@
 | 1d | `audit_events.py`（审计写入，蓝图必需） | ✅ 已完成 |
 | 1e | `idempotent_http.py`（幂等请求包装，写接口蓝图必需） | ✅ 已完成 |
 | 1f | `lingxing_writes.py`（领星推送共享管道） | ✅ 已完成 |
-| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 🔄 进行中（9 个域已完成） |
+| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 🔄 进行中（11 个域已完成） |
 | 3 | 领域逻辑外移（库存、批次、采购、生产订单、质量门） | 🔄 进行中 |
 
-已迁出的领域（共 36 条路由）：
+已迁出的领域（共 47 条路由；`app.py` 内尚余 53 条，`auth.py` 7 条）：
 
 | 蓝图 | 路由数 | 需先抽出的支撑模块 |
 | --- | --- | --- |
@@ -264,8 +264,9 @@
 | `api/purchase_orders.py` | 10 | `lingxing_writes.py`、`purchasing.py` |
 | `api/production_orders.py` | 5 | `quality.py`、`production_orders.py` |
 | `api/inbound_receipts.py` | 5 | `receipts.py` |
+| `api/scan_gun.py` | 3 | —（复用 `production_orders.py`、`quality.py`） |
 
-`app.py`：8949 → 约 5600 行。
+`app.py`：8949 → 约 5430 行。
 
 ### 10.4 领域模块一览
 

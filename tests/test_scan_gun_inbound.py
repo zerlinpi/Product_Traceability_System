@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-import app as app_module
 from test_inbound_receipts import create_order
 from test_production_orders import create_production
 from test_purchase_orders import setup_case
+from traceability.api import scan_gun as scan_gun_module
 from traceability.db import connect_database
 
 
@@ -73,14 +73,19 @@ def test_scan_gun_inbound_accumulates_and_returns_latest_stock(tmp_path):
 
 def test_scan_gun_inbound_rolls_back_record_and_stock_together(tmp_path, monkeypatch):
     client, database_path, _scenario, _fake, _order, production = setup_production(tmp_path)
-    original = app_module.record_audit_event
+    # Patched on the module that calls it, not on ``app``: the scan-gun routes
+    # moved into traceability/api/scan_gun.py, and a module holds its own binding
+    # for an imported name, so patching app.record_audit_event would no longer
+    # reach the call site. The symptom would be this test returning 201 where it
+    # expects 500 — a fault-injection test that silently stops injecting.
+    original = scan_gun_module.record_audit_event
 
     def fail_on_inbound(database, event_type, *args, **kwargs):
         if event_type == "FINISHED_GOODS_RECEIVED":
             raise RuntimeError("injected inbound failure")
         return original(database, event_type, *args, **kwargs)
 
-    monkeypatch.setattr(app_module, "record_audit_event", fail_on_inbound)
+    monkeypatch.setattr(scan_gun_module, "record_audit_event", fail_on_inbound)
     response = client.post(
         "/api/scan-gun/inbound",
         json={"productionOrderId": production["id"], "quantity": 5},
