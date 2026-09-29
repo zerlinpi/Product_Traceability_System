@@ -408,8 +408,24 @@ Python 的 `from X import y` 把名字**绑定到当前模块的命名空间**�
 * 不得直接读 `app.config`，需要时用 `flask.current_app`。
 * 移动路由**不得改变权限**。门禁每次构建都会比对生成的权限矩阵，变了就失败。
 
-### 10.9 文档一致性门禁
+**调用图会跨模块跟随**（修复 D9）。原先它是**按文件**解析的：写操作一旦搬进
+`traceability/*.py`，路由的调用图里就不再出现 `INSERT`，`Writes` 列误报为空——
+实际漏报了 6 条路由（生产订单创建、采购单推送、登出、部件/供应商更新等）。
 
+现在提取器通过 `from traceability.x import y` 跟随到定义模块。它**只跟随项目
+自己的模块**：`_project_module_name()` 对任何不在 `traceability/` 下的 `.py`
+返回 `None`，所以 `flask`、`sqlite3` 与第三方库都解析为空，分析不会下探到库内部——
+**没有黑名单需要维护**。遍历以 `(module, function)` 对去重，不会无限递归。
+
+> **这改变了「守卫放哪」的权衡吗？没有。** 跨模块跟随让分析能看见领域模块里的
+> 调用，但 §10.6 的规则依然成立：守卫留在 HTTP 层。理由是**可读性**——
+> 权限矩阵的 service 列要能一眼看出路由的授权来自哪里，而不是让读者去追三层调用。
+> 静态分析能跟上，不代表这样写更清楚。
+
+> **静态分析的边界**：通过 `getattr`、字典分派或运行时决定的调用不会被跟踪到。
+> 当前代码库不使用这些模式；若将来使用，需要在评审时留意。
+
+### 10.9 文档一致性门禁
 `docs/PERMISSION_MATRIX.md` 是**生成的**，所以不会漂移。
 其余文档都是手写的——**而它们在本次重构中确实漂移了**：
 
@@ -435,6 +451,41 @@ Python 支持版本（`pyproject` ↔ CI ↔ README ↔ `install.bat` 四方一�
 >
 > **Python 版本只支持 3.13**：CI 只在该版本验证。若要放开到 3.11/3.12，
 > 必须先把它们加进 CI matrix 并通过——**不得宣称未测试的版本受支持**。
+
+### 10.10 前端门禁与「产物入库」的代价
+
+`GET /` 服务 `static/dist/index.html`（Vite 构建产物，**已入库**）。
+之所以入库，是因为工厂服务器只有 Python 环境——`install.bat` 与
+`install-linux.sh` 不装 Node，部署因此不需要构建步骤。
+
+**代价是一个特定的风险**：开发者改了 `frontend/`、本地构建后看到效果、
+却只提交了源码。仓库里跑的仍是旧 bundle，而 **Python 测试断言的是
+「当前 `static/dist` 的内容」，不会发现这个漂移**。
+
+CI 的 `frontend` 作业（仅 Ubuntu，浏览器行为与平台无关）因此执行：
+
+```
+pnpm install --frozen-lockfile   # 严格按 lockfile，不允许改写
+pnpm typecheck                   # vue-tsc
+pnpm build
+python tools/check_frontend_build.py   # 与已提交的 bundle 比对
+pnpm e2e                         # 浏览器 smoke（PTS_BROWSER=chrome）
+```
+
+`--frozen-lockfile` 是刻意的：允许改写 lockfile 的安装会让 CI 在一套
+**没人提交过的依赖**上变绿，而漂移只会在下一次干净检出时暴露。
+
+**CI 不提交构建产物。** 会自动 push 生成物的流水线会让每次构建都可能产生冲突，
+且「什么都没改」的运行也会留下难以审查的 diff。流水线只负责拒绝漂移，
+重新构建并提交是开发者的一次有意识动作。
+
+E2E 用 `tools/dev_server.py` 起服务：它用临时库、自带种子账号、
+拒绝在 `PTS_ENV=production` 下运行，**从不触碰 `data/traceability.db`**。
+端口与凭据的默认值与 e2e 脚本一致，CI 不发明开发者用不到的配置。
+
+> E2E 的强度值得一提：它捕获 console 错误、未捕获异常、CSP 违规，
+> 并把**任何 ≥400 的响应**判为失败（仅豁免预期的 `/api/auth/me` 401）。
+> 因此前端与后端之间的字段漂移会在 3 个角色 × 16 个页面上暴露出来。
 
 ## 11. 后续兼容路线
 

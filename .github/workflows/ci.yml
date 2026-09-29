@@ -76,6 +76,97 @@ jobs:
       - name: Verify docs describe the current system
         run: python tools/check_docs_consistency.py
 
+  frontend:
+    name: Frontend (typecheck, build, e2e)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The pnpm version comes from frontend/package.json's packageManager field
+      # rather than a literal here: a second copy is a second thing to forget.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.node-version
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      # --frozen-lockfile, never a plain install: an install that is allowed to
+      # rewrite the lockfile would make CI pass on a dependency set nobody
+      # committed, and the drift would only surface on the next clean checkout.
+      - name: Install
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: frontend
+        run: pnpm typecheck
+
+      - name: Build
+        working-directory: frontend
+        run: pnpm build
+
+      # The bundle is committed because the factory server has no Node toolchain,
+      # which means a developer can edit frontend/, build locally, and commit only
+      # the source — leaving the repository serving a bundle without their change.
+      # Nothing else would notice: the Python tests assert against whatever
+      # static/dist happens to contain. So the rebuild above is compared against
+      # what git has, and the run fails if they differ. CI does not commit the
+      # result; the developer rebuilds and commits deliberately.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Committed bundle matches the source build
+        run: python tools/check_frontend_build.py
+
+      - name: Install the backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      # tools/dev_server.py is the project's own way to run a seeded server
+      # against a throwaway database: it never touches data/traceability.db and
+      # refuses to start under PTS_ENV=production. The e2e defaults (port 5090,
+      # admin credentials) match what it seeds, so no configuration is invented
+      # here that the developer does not also use.
+      - name: Start the server
+        run: |
+          nohup python tools/dev_server.py --port 5090 > dev-server.log 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:5090/api/health > /dev/null; then
+              echo "server ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server did not become healthy; log follows" >&2
+          cat dev-server.log >&2
+          exit 1
+
+      # Ubuntu only. The smoke test drives the built UI in a browser; that
+      # behaviour does not vary by platform, so repeating it on Windows would
+      # double the slowest job to learn nothing. The Python suite still runs on
+      # both, which is where the platform assumptions actually live.
+      - name: End-to-end smoke test
+        working-directory: frontend
+        env:
+          # playwright-core ships no browsers; the runner's Chrome is the one to
+          # use. The script defaults to msedge, which does not exist on Linux.
+          PTS_BROWSER: chrome
+        run: pnpm e2e
+
+      - name: Server log on failure
+        if: failure()
+        run: |
+          {
+            echo "## dev server log"
+            echo '```'
+            tail -80 dev-server.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}

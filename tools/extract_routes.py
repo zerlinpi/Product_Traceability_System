@@ -117,7 +117,18 @@ SCOPE_GUARDS_ARE_NOOP = True
 # Requests to these never reach the "must be logged in" check.
 GATE_EXEMPT = {"/api/health", "/api/auth/login"}
 
-WRITE_RE = re.compile(r"BEGIN IMMEDIATE|INSERT INTO|UPDATE \w+ SET|DELETE FROM")
+# Statements that change stored data. ``REPLACE INTO`` and ``executemany`` are
+# included because SQLite's upsert form and the bulk form both write without
+# matching INSERT/UPDATE; a route that used only those would have been reported
+# as a read.
+WRITE_RE = re.compile(
+    r"BEGIN IMMEDIATE"
+    r"|INSERT\s+(?:OR\s+\w+\s+)?INTO"
+    r"|REPLACE\s+INTO"
+    r"|UPDATE\s+\w+\s+SET"
+    r"|DELETE\s+FROM"
+    r"|executemany\s*\("
+)
 READ_METHODS = {"GET"}
 
 
@@ -144,20 +155,188 @@ def _calls(text: str, known: set[str]) -> set[str]:
     return {m.group("name") for m in CALL_RE.finditer(text) if m.group("name") in known}
 
 
-def _resolve_guards(
-    name: str, blocks: dict[str, tuple[int, int]], lines: list[str], known: set[str]
-) -> tuple[list[str], set[str]]:
-    """Transitive guards for ``name``. Returns (guards, functions_visited)."""
-    guards: list[str] = []
-    visited: set[str] = set()
-    queue = [name]
-    while queue:
-        current = queue.pop(0)
-        if current in visited or current not in blocks:
+def _code_only(text: str) -> str:
+    """Drop whole-line comments before pattern matching.
+
+    ``traceability/auth.py`` documents the capability guard with the literal
+    text ``require_capability(Capability.X)`` in a comment. A line-based scan
+    never saw it — the comment sits outside any function body — but once the
+    graph crosses module boundaries a whole module's lines are fair game, and
+    ``Capability.X`` is not a real capability, so the run aborted.
+
+    Only whole-line comments are removed. Stripping trailing ``#`` would cut
+    into string literals that legitimately contain one (``"#fff"``), and the
+    cost of missing a trailing comment here is nil: a commented-out guard on
+    the same line as code is not a pattern this codebase uses.
+    """
+    return "\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Cross-module call graph (deviation D9)
+# ---------------------------------------------------------------------------
+#
+# The route modules are thin: a handler delegates to a domain function in
+# ``traceability/*.py``, and that function is where the INSERT lives. The graph
+# above is built per file, so as soon as a write moved into a domain module the
+# route's ``Writes`` column went blank — the matrix claimed that POST
+# /api/production-orders, which creates a production order, does not write.
+#
+# This index lets the graph leave a file, following ``from traceability.x import
+# y`` into the module that defines ``y``. It only ever follows the project's own
+# modules: ``_project_module_name`` returns None for anything that is not a .py
+# file under ``traceability/``, so ``flask``, ``sqlite3`` and every other library
+# resolve to nothing and the analysis never descends into them. That is the whole
+# sandbox — no blocklist to keep current.
+
+DOMAIN_DIR = ROOT / "traceability"
+
+FROM_IMPORT_RE = re.compile(r"^from\s+(?P<module>[\w.]+)\s+import\s+(?P<names>.+?)\s*$")
+IMPORTED_NAME_RE = re.compile(r"^(?P<name>\w+)(?:\s+as\s+(?P<alias>\w+))?$")
+
+
+def _project_module_name(path: Path) -> str | None:
+    """Dotted module name for a project file, or None if it is not one."""
+    try:
+        relative = path.resolve().relative_to(ROOT)
+    except ValueError:
+        return None
+    if relative.suffix != ".py" or not relative.parts or relative.parts[0] != "traceability":
+        return None
+    return ".".join(relative.with_suffix("").parts)
+
+
+def _logical_lines(lines: list[str]) -> list[str]:
+    """Join parenthesised continuations so a wrapped import reads as one line.
+
+    ``from traceability.purchasing import (`` / ``a,`` / ``b,`` / ``)`` is how
+    most of these files are written, and a line-at-a-time parse would miss every
+    name in it.
+    """
+    logical: list[str] = []
+    buffer = ""
+    depth = 0
+    for line in lines:
+        stripped = line.split("#", 1)[0].rstrip()
+        if not stripped and not buffer:
             continue
-        visited.add(current)
-        start, end = blocks[current]
-        body = "\n".join(lines[start:end])
+        buffer = f"{buffer} {stripped}".strip() if buffer else stripped
+        depth += stripped.count("(") - stripped.count(")")
+        if depth <= 0:
+            logical.append(buffer)
+            buffer = ""
+            depth = 0
+    if buffer:
+        logical.append(buffer)
+    return logical
+
+
+class _Module:
+    """One project module: its lines, its top-level functions, its imports."""
+
+    __slots__ = ("name", "lines", "blocks", "imports")
+
+    def __init__(self, name: str, lines: list[str]) -> None:
+        self.name = name
+        self.lines = lines
+        self.blocks = _blocks(lines, 0)
+        self.imports: dict[str, tuple[str, str]] = {}
+        for line in _logical_lines(lines):
+            match = FROM_IMPORT_RE.match(line)
+            if not match:
+                continue
+            target = ROOT / (match.group("module").replace(".", "/") + ".py")
+            dotted = _project_module_name(target)
+            if dotted is None:
+                continue
+            names = match.group("names").strip().strip("()")
+            for part in names.split(","):
+                parsed = IMPORTED_NAME_RE.match(part.strip())
+                if parsed:
+                    self.imports[parsed.group("alias") or parsed.group("name")] = (
+                        dotted,
+                        parsed.group("name"),
+                    )
+
+
+class _Index:
+    """Lazy cache of project modules, so the graph can cross file boundaries."""
+
+    def __init__(self) -> None:
+        self._modules: dict[str, _Module | None] = {}
+
+    def module(self, name: str) -> _Module | None:
+        if name not in self._modules:
+            path = ROOT / (name.replace(".", "/") + ".py")
+            self._modules[name] = (
+                _Module(name, path.read_text(encoding="utf-8").splitlines())
+                if path.is_file()
+                else None
+            )
+        return self._modules[name]
+
+    def body(self, module_name: str, function: str) -> str | None:
+        module = self.module(module_name)
+        if module is None or function not in module.blocks:
+            return None
+        start, end = module.blocks[function]
+        return "\n".join(module.lines[start:end])
+
+    def callees(self, module_name: str, body: str) -> set[tuple[str, str]]:
+        """(module, function) pairs this body calls, within the project only.
+
+        Local names win over imported ones: a module that defines ``foo`` and
+        also imports a ``foo`` means its own definition is what runs.
+        """
+        module = self.module(module_name)
+        if module is None:
+            return set()
+        found: set[tuple[str, str]] = set()
+        for match in CALL_RE.finditer(body):
+            name = match.group("name")
+            if name in module.blocks:
+                found.add((module_name, name))
+            elif name in module.imports:
+                target_module, original = module.imports[name]
+                imported = self.module(target_module)
+                if imported is not None and original in imported.blocks:
+                    found.add((target_module, original))
+        return found
+
+
+
+def _resolve_guards(
+    name: str,
+    module_name: str,
+    blocks: dict[str, tuple[int, int]],
+    lines: list[str],
+    known: set[str],
+    index: _Index,
+) -> tuple[list[str], set[tuple[str, str]]]:
+    """Transitive guards for ``name``. Returns (guards, (module, function) pairs).
+
+    Starts in the route's own declaration layer (``blocks``/``lines``) and then
+    crosses into other project modules through ``index``, so a guard reached via
+    a domain function is found rather than silently dropped.
+    """
+    guards: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    queue: list[tuple[str, str]] = [(module_name, name)]
+    while queue:
+        current_module, current = queue.pop(0)
+        if (current_module, current) in seen:
+            continue
+        seen.add((current_module, current))
+        if current_module == module_name and current in blocks:
+            start, end = blocks[current]
+            body = _code_only("\n".join(lines[start:end]))
+        else:
+            raw = index.body(current_module, current)
+            if raw is None:
+                continue
+            body = _code_only(raw)
         for guard in {*GUARD_ROLE, *GUARD_SCOPE}:
             if re.search(rf"\b{guard}\s*\(", body) and guard not in guards:
                 guards.append(guard)
@@ -165,29 +344,33 @@ def _resolve_guards(
             token = f"cap:{match.group('name')}"
             if token not in guards:
                 guards.append(token)
-        queue.extend(_calls(body, known) - visited)
+        for callee in index.callees(current_module, body):
+            if callee not in seen:
+                queue.append(callee)
         for match in IDEMPOTENT_WRAPPER_RE.finditer(body):
             impl = match.group("impl")
-            if impl in known and impl not in visited:
-                queue.append(impl)
-    return guards, visited
+            if impl in known and (module_name, impl) not in seen:
+                queue.append((module_name, impl))
+    return guards, seen
 
 
 def extract() -> list[dict[str, object]]:
     routes: list[dict[str, object]] = []
+    index = _Index()
     for source in SOURCES:
-        routes.extend(_extract_file(source))
+        routes.extend(_extract_file(source, index))
     return routes
 
 
-def _extract_file(source: Path) -> list[dict[str, object]]:
+def _extract_file(source: Path, index: _Index) -> list[dict[str, object]]:
     lines = source.read_text(encoding="utf-8").splitlines()
+    module_name = _project_module_name(source) or ""
     # Blocks are per declaration layer, resolved lazily from each route's own
     # indentation, so one file can hold both module-level helpers and nested
     # ones without either leaking into the other's call graph.
     blocks_by_indent: dict[int, dict[str, tuple[int, int]]] = {}
     routes: list[dict[str, object]] = []
-    for index, line in enumerate(lines):
+    for index_line, line in enumerate(lines):
         route = ROUTE_RE.match(line)
         if not route:
             continue
@@ -197,18 +380,28 @@ def _extract_file(source: Path) -> list[dict[str, object]]:
         args = route.group("args")
         path_match = re.match(r'\s*["\']([^"\']+)["\']', args)
         path = path_match.group(1) if path_match else args.strip()
-        definition = _def_re(indent).match(lines[index + 1]) if index + 1 < len(lines) else None
+        definition = (
+            _def_re(indent).match(lines[index_line + 1]) if index_line + 1 < len(lines) else None
+        )
         if not definition:
             continue
         handler = definition.group("name")
-        guards, visited = _resolve_guards(handler, blocks, lines, known)
+        guards, visited = _resolve_guards(handler, module_name, blocks, lines, known, index)
         start, end = blocks[handler]
         body = "\n".join(lines[start:end])
-        # Write detection follows the same call graph.
+        # Write detection walks the same graph, including the parts of it that
+        # live in other modules — that is where the INSERTs are.
         write_body = body
-        for callee in visited - {handler}:
-            callee_start, callee_end = blocks[callee]
-            write_body += "\n" + "\n".join(lines[callee_start:callee_end])
+        for visited_module, callee in visited:
+            if visited_module == module_name and callee == handler:
+                continue
+            callee_body = (
+                "\n".join(lines[blocks[callee][0] : blocks[callee][1]])
+                if visited_module == module_name and callee in blocks
+                else index.body(visited_module, callee)
+            )
+            if callee_body:
+                write_body += "\n" + callee_body
         roles = sorted({GUARD_ROLE[g] for g in guards if g in GUARD_ROLE})  # type: ignore[index]
         resolved: set[str] = set()
         for item in roles:  # type: ignore[union-attr]
@@ -232,11 +425,13 @@ def _extract_file(source: Path) -> list[dict[str, object]]:
                 "path": path,
                 "handler": handler,
                 "source": str(source.relative_to(ROOT)).replace("\\", "/"),
-                "line": index + 1,
+                "line": index_line + 1,
                 "roles": roles,
                 "capabilities": capabilities,
                 "scopes": scopes,
-                "guard_source": sorted(visited),
+                # Names only: the column is a hint about where a guard lives, and
+                # qualified paths would push it past the 70-char cell.
+                "guard_source": sorted({callee for _module, callee in visited}),
                 "guards_in_handler": sorted(own_guards),
                 "guarded_in_service": bool(set(guards) - set(own_guards)),
                 # The authentication gate in auth.before_request only inspects

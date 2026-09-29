@@ -149,6 +149,29 @@ TABLE-A-20260718-0003
 
 局域网其他电脑访问 `http://<服务器电脑IP>:5080`。如果无法连接，请允许 Windows 防火墙 TCP 5080 入站，并确认工位与服务器处于同一局域网。
 
+### 前端不需要构建工具链
+
+`GET /` 直接返回 `static/dist/index.html`，即 Vite 的构建产物。
+**该产物已提交到仓库**，因此部署服务器**不需要安装 Node / pnpm**——
+`install.bat` 与 `install-linux.sh` 只准备 Python 环境，这是有意的。
+
+代价是：**改了 `frontend/` 就必须重新构建并提交 `static/dist`**。
+否则仓库里跑的仍是旧 bundle，而 Python 测试断言的是「当前 `static/dist` 的内容」，
+**不会发现这个漂移**。所以 CI 会重新构建并与已提交内容比对，
+不一致即失败（`tools/check_frontend_build.py`）：
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm build
+cd ..
+git add static/dist
+```
+
+只有需要改前端时才需要 Node（版本见 `frontend/.node-version`，pnpm 版本见
+`frontend/package.json` 的 `packageManager`）。CI 会执行 typecheck、build、
+构建一致性检查，以及一轮浏览器 smoke E2E。
+
 ## Windows 服务器部署配置
 
 1. 将 `settings.example.bat` 复制为 `settings.bat`。

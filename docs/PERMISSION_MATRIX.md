@@ -301,28 +301,38 @@ def _impl_scan_gun_inbound():
 下次服务启动会自动执行 v19（为 `purchase_orders` / `inbound_receipts` 增加
 `push_started_at` 列）。v19 为纯增量迁移，不影响既有数据。
 
-### D9 — `Writes` 列对已迁入领域模块的写路由漏报
+### D9 — 已解决：`Writes` 列的跨模块漏报
 
-`tools/extract_routes.py` 的调用图**按文件解析**：它把 `app.py`（4 空格层）
-与 `traceability/api/*.py`（0 空格层）各自的函数体纳入解析，
-但**不跨文件跟随**到 `traceability/*.py` 的领域模块。
+**原问题**：`tools/extract_routes.py` 的调用图按文件解析，不跨文件跟随到
+`traceability/*.py` 的领域模块。写操作一旦被搬进领域模块，路由的调用图里
+就不再出现 `INSERT INTO` / `BEGIN IMMEDIATE`，`Writes` 列误报为空。
 
-因此写操作一旦被搬进领域模块，路由的调用图里就不再出现
-`BEGIN IMMEDIATE` / `INSERT INTO`，`Writes` 列会误报为空。
-**当前受影响的行**：
+**修法**：提取器现在通过 `from traceability.x import y` 跨模块跟随调用图。
+它**只跟随项目自己的模块**——`_project_module_name()` 对任何不在
+`traceability/` 下的 `.py` 返回 `None`，因此 `flask`、`sqlite3` 及其他库
+都解析为空，分析不会下探到库内部。没有黑名单需要维护。
+遍历用 `(module, function)` 对的 visited set 去重，不会无限递归。
 
-| Method | Path | 实际 | 文档显示 |
-| --- | --- | --- | --- |
-| `POST` | `/api/production-orders` | 写入 | 空 |
-| `POST` | `/api/production-orders/batch` | 写入 | 空 |
+**修正了 6 条漏报**（全部是 `空 → yes`，即原本该报而未报）：
 
-**这不影响 `Effective access`** —— 守卫已上移到路由层（见下方「守卫必须留在
-HTTP 层」），权限列经逐行比对确认未变。受影响的只是「是否写操作」这一信息列。
+| Method | Path | 真实写入点 |
+| --- | --- | --- |
+| `POST` | `/api/auth/logout` | `_record_security_event()` → 审计链 `INSERT` |
+| `PUT` | `/api/part-types/<id>` | `traceability/api/part_types.py` 的 `INSERT INTO part_types` |
+| `PUT` | `/api/suppliers/<id>` | `traceability/api/suppliers.py` 的 `INSERT INTO suppliers` |
+| `POST` | `/api/production-orders` | `production_orders.py` 的 `BEGIN IMMEDIATE` + `INSERT` |
+| `POST` | `/api/production-orders/batch` | 同上 |
+| `POST` | `/api/purchase-orders/<id>/push` | 推送状态与审计写入 |
 
-> **这不是一次性问题**：每把一个写领域搬进独立模块，漏报就扩大一分。
-> 修法是让提取器**跨文件跟随调用图**，但那属于安全门禁工具自身的改造，
-> 需要独立提交、独立验证——**不应混在「搬路由」的改动里**。
-> 同时改路由与门禁工具，一旦权限列出现意外变化，就无法判断是哪一侧造成的。
+**`Effective access` 逐行比对确认零变化**（107 条路由，权限列 0 处改动）。
+本次修改只影响「是否写操作」这一列，且方向是**修复漏报**。
+
+写入识别同时补上了 `REPLACE INTO` 与 `executemany(`——SQLite 的 upsert
+与批量形式都会写库，但都不匹配原先的 `INSERT` / `UPDATE` 模式。
+
+> **遗留的边界**：分析仍是**静态**的，跟随的是源码里的调用关系。
+> 通过 `getattr`、字典分派或在运行时决定的调用不会被跟踪到，
+> 这类写操作仍会漏报。目前代码库不使用这些模式。
 
 ---
 
@@ -335,12 +345,12 @@ HTTP 层」），权限列经逐行比对确认未变。受影响的只是「是
 | `GET` | `/api/audit-events` | ADMIN |  | handler |  |
 | `POST` | `/api/auth/change-password` | any authenticated |  | handler | yes |
 | `POST` | `/api/auth/login` | public (no login) |  | handler | yes |
-| `POST` | `/api/auth/logout` | any authenticated |  | handler |  |
+| `POST` | `/api/auth/logout` | any authenticated |  | handler | yes |
 | `GET` | `/api/auth/me` | any authenticated |  | handler |  |
-| `POST` | `/api/batch-entry/scan` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_batch_entry_scan | yes |
+| `POST` | `/api/batch-entry/scan` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_batch_entry_scan, _value, canonical_entry, chain_tip, claim, cle | yes |
 | `GET` | `/api/batch-trace-records` | any authenticated |  | handler |  |
 | `POST` | `/api/batch-trace-records/<int:record_id>/hold` | ADMIN |  | handler | yes |
-| `POST` | `/api/batch-trace-records/<int:record_id>/pass` | ADMIN |  | service: transition_batch_quality | yes |
+| `POST` | `/api/batch-trace-records/<int:record_id>/pass` | ADMIN |  | service: _value, canonical_entry, chain_tip, compute_event_hash, connect_databa | yes |
 | `POST` | `/api/batch-trace/query` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `POST` | `/api/bluetooth/discover` | any authenticated |  | handler |  |
 | `POST` | `/api/bluetooth/read-sn` | any authenticated |  | handler |  |
@@ -369,7 +379,7 @@ HTTP 层」），权限列经逐行比对确认未变。受影响的只是「是
 | `GET` | `/api/part-labels/<int:label_id>/qr` | any authenticated scope:supplier(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/part-types` | any authenticated |  | handler |  |
 | `POST` | `/api/part-types` | ADMIN |  | handler | yes |
-| `PUT` | `/api/part-types/<int:part_type_id>` | ADMIN |  | handler |  |
+| `PUT` | `/api/part-types/<int:part_type_id>` | ADMIN |  | handler | yes |
 | `GET` | `/api/product-attribute-columns` | any authenticated |  | handler |  |
 | `GET` | `/api/product-code-batches` | ADMIN |  | handler |  |
 | `GET` | `/api/product-code-batches/<int:generation_batch_id>` | ADMIN |  | handler |  |
@@ -386,37 +396,37 @@ HTTP 层」），权限列经逐行比对确认未变。受影响的只是「是
 | `DELETE` | `/api/product-models/<int:model_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `PUT` | `/api/product-models/<int:model_id>` | ADMIN |  | handler | yes |
 | `GET` | `/api/production-batches` | any authenticated |  | handler |  |
-| `POST` | `/api/production-batches` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_batch | yes |
+| `POST` | `/api/production-batches` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_batch, _value, batch_identification_code, cano | yes |
 | `GET` | `/api/production-batches/<int:batch_id>` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-batches/<int:batch_id>/qr` | any authenticated scope:product(NOOP) | `TRACE_VIEW` | handler |  |
 | `GET` | `/api/production-orders` | ADMIN + WAREHOUSE |  | handler |  |
-| `POST` | `/api/production-orders` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_order |  |
+| `POST` | `/api/production-orders` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_order, _value, batch_identification_code, busi | yes |
 | `GET` | `/api/production-orders/<int:production_order_id>` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
 | `GET` | `/api/production-orders/<int:production_order_id>/qr` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
-| `POST` | `/api/production-orders/batch` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_orders_batch |  |
+| `POST` | `/api/production-orders/batch` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_create_production_orders_batch, _value, batch_identification_cod | yes |
 | `GET` | `/api/products` | any authenticated |  | handler |  |
 | `POST` | `/api/products` | ADMIN + OPERATIONS |  | handler | yes |
 | `PUT` | `/api/products/<int:product_model_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `POST` | `/api/products/<int:product_model_id>/code-sets` | ADMIN |  | handler | yes |
 | `GET` | `/api/products/<int:product_model_id>/qrcodes.zip` | ADMIN |  | handler |  |
 | `GET` | `/api/purchase-orders` | any authenticated |  | handler |  |
-| `POST` | `/api/purchase-orders` | ADMIN + OPERATIONS |  | service: _impl_create_purchase_order | yes |
+| `POST` | `/api/purchase-orders` | ADMIN + OPERATIONS |  | service: _impl_create_purchase_order, _value, business_id, business_quantity, c | yes |
 | `DELETE` | `/api/purchase-orders/<int:purchase_order_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `GET` | `/api/purchase-orders/<int:purchase_order_id>` | any authenticated |  | handler |  |
 | `PUT` | `/api/purchase-orders/<int:purchase_order_id>` | ADMIN + OPERATIONS |  | handler | yes |
 | `GET` | `/api/purchase-orders/<int:purchase_order_id>/export` | ADMIN + OPERATIONS |  | handler |  |
 | `GET` | `/api/purchase-orders/<int:purchase_order_id>/factory-progress` | ADMIN + OPERATIONS |  | handler |  |
-| `POST` | `/api/purchase-orders/<int:purchase_order_id>/push` | ADMIN + OPERATIONS |  | handler |  |
+| `POST` | `/api/purchase-orders/<int:purchase_order_id>/push` | ADMIN + OPERATIONS |  | handler | yes |
 | `GET` | `/api/purchase-orders/<int:purchase_order_id>/sync-status` | ADMIN + OPERATIONS |  | handler |  |
 | `GET` | `/api/purchase-orders/export` | ADMIN + OPERATIONS |  | handler |  |
 | `GET` | `/api/records` | ADMIN + WAREHOUSE scope:product(NOOP) | `RECORD_VIEW` | handler |  |
-| `DELETE` | `/api/records/<int:record_id>` | ADMIN + WAREHOUSE scope:product(NOOP) | `RECORD_DELETE` | service: editable_record | yes |
-| `PUT` | `/api/records/<int:record_id>` | ADMIN + WAREHOUSE scope:product+scope:supplier(NOOP) | `RECORD_EDIT` | service: editable_record | yes |
+| `DELETE` | `/api/records/<int:record_id>` | ADMIN + WAREHOUSE scope:product(NOOP) | `RECORD_DELETE` | service: _value, canonical_entry, capabilities_for_role, chain_tip, clean_text, | yes |
+| `PUT` | `/api/records/<int:record_id>` | ADMIN + WAREHOUSE scope:product+scope:supplier(NOOP) | `RECORD_EDIT` | service: _trace_plan_slot_dict, _value, canonical_entry, capabilities_for_role, | yes |
 | `PUT` | `/api/records/<int:record_id>/status` | ADMIN |  | handler | yes |
 | `GET` | `/api/records/export.xlsx` | any authenticated |  | handler |  |
 | `PUT` | `/api/records/status/bulk` | ADMIN |  | handler | yes |
 | `POST` | `/api/scan` | ADMIN + WAREHOUSE scope:product+scope:supplier(NOOP) | `LEGACY_SCAN` | handler | yes |
-| `POST` | `/api/scan-gun/inbound` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_scan_gun_inbound | yes |
+| `POST` | `/api/scan-gun/inbound` | ADMIN + WAREHOUSE scope:product(NOOP) |  | service: _impl_scan_gun_inbound, _value, business_id, business_quantity, canoni | yes |
 | `POST` | `/api/scan-gun/lookup` | ADMIN + WAREHOUSE scope:product(NOOP) |  | handler |  |
 | `POST` | `/api/scan/reset` | any authenticated |  | handler | yes |
 | `GET` | `/api/scan/session` | any authenticated |  | handler |  |
@@ -431,7 +441,7 @@ HTTP 层」），权限列经逐行比对确认未变。受影响的只是「是
 | `GET` | `/api/suppliers` | any authenticated |  | handler |  |
 | `POST` | `/api/suppliers` | ADMIN |  | handler | yes |
 | `GET` | `/api/suppliers/<int:supplier_id>` | ADMIN |  | handler |  |
-| `PUT` | `/api/suppliers/<int:supplier_id>` | ADMIN |  | handler |  |
+| `PUT` | `/api/suppliers/<int:supplier_id>` | ADMIN |  | handler | yes |
 | `GET` | `/api/trace-plans` | any authenticated |  | handler |  |
 | `POST` | `/api/trace-plans` | ADMIN |  | handler | yes |
 | `GET` | `/api/users` | ADMIN |  | handler |  |
