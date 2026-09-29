@@ -6,6 +6,16 @@ from io import BytesIO
 from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from traceability.validators import looks_like_spreadsheet_formula
+
+# cellXfs indexes (see ``styles`` below): 0 body, 1 header, 2 zebra body,
+# 3 two-decimal number, 4 / 5 the body styles with ``quotePrefix``.
+# Text is written as an inline string, so it is never evaluated on open, but a
+# user pressing F2 + Enter on "=cmd|..." would turn it into a live formula.
+# ``quotePrefix`` keeps such cells text even after editing, without showing an
+# apostrophe or altering the exported value.
+_TEXT_GUARD_STYLES = {0: 4, 2: 5}
+
 
 def _column_name(index: int) -> str:
     result = ""
@@ -23,6 +33,9 @@ def _cell_xml(row: int, column: int, value: object, style: int = 0) -> str:
     if isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
         return f'<c r="{reference}" t="n"{style_attribute}><v>{value}</v></c>'
     text = "" if value is None else str(value)
+    if looks_like_spreadsheet_formula(text):
+        style = _TEXT_GUARD_STYLES.get(style, style)
+        style_attribute = f' s="{style}"'
     return (
         f'<c r="{reference}" t="inlineStr"{style_attribute}>'
         f'<is><t xml:space="preserve">{escape(text)}</t></is></c>'
@@ -105,7 +118,7 @@ def build_traceability_xlsx(headers: list[str], rows: list[list[object]]) -> byt
   <fills count="4"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF00C995"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFF5FAF8"/><bgColor indexed="64"/></patternFill></fill></fills>
   <borders count="2"><border/><border><left style="thin"><color rgb="FFE5E7EB"/></left><right style="thin"><color rgb="FFE5E7EB"/></right><top style="thin"><color rgb="FFE5E7EB"/></top><bottom style="thin"><color rgb="FFE5E7EB"/></bottom></border></borders>
   <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-  <cellXfs count="4"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1"/><xf numFmtId="2" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/></cellXfs>
+  <cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1"/><xf numFmtId="2" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" quotePrefix="1"/><xf numFmtId="0" fontId="0" fillId="3" borderId="1" xfId="0" applyFill="1" applyBorder="1" quotePrefix="1"/></cellXfs>
   <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>'''
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")

@@ -736,7 +736,7 @@ def test_part_code_generation_retries_a_database_collision(client, monkeypatch):
     _, part = create_supplier_and_part(client, "CODE-RETRY")
     existing = create_labels(client, part["id"], 1)[0]["identificationCode"]
     generated = iter([existing, "PTS:P:UNIQUECODE00000000000001"])
-    monkeypatch.setattr("app.new_part_identification_code", lambda: next(generated))
+    monkeypatch.setattr("traceability.api.part_labels.new_part_identification_code", lambda: next(generated))
 
     retried = create_labels(client, part["id"], 1)[0]
     assert retried["identificationCode"] == "PTS:P:UNIQUECODE00000000000001"
@@ -839,6 +839,36 @@ def test_quality_release_gate_is_opt_in_and_blocks_non_pass_parts(client):
         client, "STATION-QUALITY", labels[1]["identificationCode"]
     )["data"]
     assert completed["completed"] is True
+
+
+def test_quality_gate_change_is_refused_only_while_a_station_is_scanning(client):
+    machine = create_machine(client, "TW-04-000000000000000000000052")
+    scan(client, "STATION-GATE", machine["identificationCode"])
+
+    # Re-sending the current value is not a change: saving the 领星 credentials
+    # from the settings page must not be blocked by an open station.
+    unchanged = client.put(
+        "/api/settings",
+        json={"requireQualityRelease": False, "appId": "app-1", "appSecret": "secret-1"},
+    )
+    assert unchanged.status_code == 200, unchanged.get_json()
+    assert unchanged.get_json()["data"]["requireQualityRelease"] is False
+    assert unchanged.get_json()["data"]["lingxing"]["configured"] is True
+
+    # An actual flip is refused while the station holds a machine.
+    flipped = client.put("/api/settings", json={"requireQualityRelease": True})
+    assert flipped.status_code == 409, flipped.get_json()
+    assert "工位" in flipped.get_json()["message"]
+    assert client.get("/api/settings").get_json()["data"]["requireQualityRelease"] is False
+
+    # Once the station clears its flow, the gate can be switched.
+    reset = client.post(
+        "/api/scan/reset", json={"stationId": "STATION-GATE", "reason": "切换检验放行"}
+    )
+    assert reset.status_code == 200, reset.get_json()
+    enabled = client.put("/api/settings", json={"requireQualityRelease": True})
+    assert enabled.status_code == 200, enabled.get_json()
+    assert enabled.get_json()["data"]["requireQualityRelease"] is True
 
 
 def test_last_component_scan_can_be_undone_with_reason_and_audit(client):
@@ -970,86 +1000,105 @@ def test_telemetry_identity_parser_uses_full_manufacturer_sn():
 
 
 def test_frontend_is_served_without_external_assets(client):
+    """The SPA entry is the Vite build of frontend/ (static/dist/index.html).
+
+    Its markup is rendered client-side, so the served page is checked for the
+    shell (title, no external origin, only same-origin hashed bundles) and the
+    Vue sources for the screens the previous version of this test pinned in
+    the monolithic template: the login form, the product / user forms, every
+    dialog, the dashboard and trace widgets and the scan-gun keyboard logic.
+    """
+    from frontend_sources import (
+        SRC,
+        VIEWS,
+        all_source_text,
+        menu_pages,
+        opening_tags,
+        page_source,
+        pages,
+        read,
+        source_files,
+        static_ids,
+        template_of,
+    )
+
     page = client.get("/")
     assert page.status_code == 200
+    assert page.mimetype == "text/html"
     html = page.get_data(as_text=True)
     assert "聚星同创仓库管理系统" in html
     assert "PaceFit" not in html
-    assert 'id="login-form"' in html
-    assert 'id="product-form"' in html
-    assert 'id="user-form"' in html
-    assert 'data-role="ADMIN"' in html
-    assert 'data-role="WAREHOUSE"' in html
-    assert 'data-role="OPERATIONS"' in html
-    assert 'id="genealogy-modal"' in html
-    assert 'id="code-modal"' in html
-    assert 'id="record-edit-modal"' in html
-    assert 'id="record-delete-modal"' in html
-    assert 'id="record-quality-modal"' in html
-    assert 'id="inventory-movement-modal"' in html
-    assert 'id="dashboard-quality-queue"' in html
-    assert 'id="dashboard-quality-bulk-button"' in html
-    assert 'id="trace-record-table"' in html
-    assert 'id="trace-status-filter"' in html
-    assert 'id="trace-date-from"' in html
-    assert 'id="trace-date-to"' in html
-    assert 'id="dashboard-stock-alerts"' in html
-    assert 'data-view="batch-entry"' in html
-    assert 'data-view="my-records"' in html
-    assert 'data-role="ADMIN,WAREHOUSE"' in html
-    assert 'data-view="users"' in html
-    assert 'id="supplier-product-usage-table"' in html
-    assert 'name="role"' in html
     assert "当前工位" not in html
-    assert "用户管理" in html
-    assert "添加新产品" in html
-    assert "产品录入记录" in html
     assert "http://" not in html
     assert "https://" not in html
-    script = client.get("/static/app_v2.js")
-    assert script.status_code == 200
-    javascript = script.get_data(as_text=True)
-    assert "handleBatchEntryKeydown" in javascript
-    assert ".requestSubmit()" in javascript
-    assert "requestAnimationFrame(apply)" in javascript
-    assert "setTimeout(apply, 180)" in javascript
-    assert 'if (isWarehouse()) return ["batch-gen", "batch-entry", "inbound-receipts", "production-orders", "scan-gun", "batch-trace", "my-records"]' in javascript
-    assert 'if (isOperations()) return ["products", "purchase-orders", "batch-trace", "inventory-sync"]' in javascript
-    assert 'data-view="suppliers"' in html
-    assert 'id="supplier-grid"' in html
-    assert 'id="product-batch-detail"' in html
-    assert 'id="delete-product"' in html
-    assert "handleRecordScannerKeydown" in javascript
-    assert "openInventoryMovements" in javascript
-    assert "submitRecordQuality" in javascript
-    assert "openBulkQuality" in javascript
-    assert '"/api/records/status/bulk"' in javascript
-    assert "genealogy-main-qr" in javascript
-    assert "dispatchDataAction" in javascript
-    assert '"open-supplier":' in javascript
-    assert '"open-related-product":' in javascript
-    assert "record-scan-input" in javascript
-    stylesheet = client.get("/static/styles_v2.css")
-    assert stylesheet.status_code == 200
-    css = stylesheet.get_data(as_text=True)
-    assert ".trace-filter-grid" in css
-    assert ".genealogy-part img" in css
-    assert "linear-gradient" not in css
-    html_ids = re.findall(r'\sid="([^"]+)"', html)
-    assert len(html_ids) == len(set(html_ids))
-    referenced_ids = set(re.findall(r'\$\("#([A-Za-z0-9_-]+)"', javascript))
-    assert referenced_ids.issubset(set(html_ids))
-    rendered_actions = set(re.findall(r'data-action="([a-z0-9-]+)"', javascript))
-    registered_actions = set(re.findall(r'^\s+"([a-z0-9-]+)": \{ run:', javascript, re.MULTILINE))
-    assert rendered_actions.issubset(registered_actions)
-    for button_tag in re.findall(r"<button\b[^>]*>", html):
-        if any(attribute in button_tag for attribute in ("data-view=", "data-go=", "data-close=", "data-action=")):
-            continue
-        if 'type="submit"' in button_tag:
-            continue
-        button_id = re.search(r'id="([^"]+)"', button_tag)
-        assert button_id, f"没有操作标识的按钮: {button_tag}"
-        assert f'$("#{button_id.group(1)}")' in javascript, f"按钮未绑定事件: {button_id.group(1)}"
+    for reference in re.findall(r'(?:src|href)="([^"]+)"', html):
+        assert reference.startswith("/static/dist/"), f"外部或非打包资源: {reference}"
+        asset = client.get(reference)
+        assert asset.status_code == 200, reference
+        asset.close()
+
+    sources = all_source_text(".vue", ".ts")
+    assert "PaceFit" not in sources
+    assert "当前工位" not in sources
+    assert 'id="login-form"' in read(VIEWS / "login.vue")
+
+    # The screens and dialogs the previous single-page template carried.
+    markers = {
+        "products": ['id="product-form"', 'id="code-modal"', 'id="product-grid"', 'id="product-batch-detail"', 'id="delete-product"', "添加新产品"],
+        "users": ['id="user-form"', 'name="role"', "用户管理"],
+        "suppliers": ['id="supplier-grid"', 'id="supplier-product-usage-table"', 'id="inventory-movement-modal"', "openInventoryMovements"],
+        "trace": [
+            'id="genealogy-modal"', 'id="record-edit-modal"', 'id="record-delete-modal"', 'id="record-quality-modal"',
+            'id="trace-record-table"', 'id="trace-status-filter"', 'id="trace-date-from"', 'id="trace-date-to"',
+            "handleRecordScannerKeydown", "submitRecordQuality", "openBulkQuality", "genealogy-main-qr", "record-scan-input",
+        ],
+        "dashboard": ['id="dashboard-quality-queue"', 'id="dashboard-quality-bulk-button"', 'id="dashboard-stock-alerts"', "openBulkQuality"],
+        "batch-entry": ["handleBatchEntryKeydown", "useScanCapture("],
+    }
+    for key, expected in markers.items():
+        text = page_source(key)
+        for marker in expected:
+            assert marker in text, f"{key}: 缺少 {marker}"
+    assert "'/api/records/status/bulk'" in read(SRC / "api" / "modules" / "records.ts")
+
+    # Scanner Enter submits and focus is re-applied until the page settles.
+    scanner = read(SRC / "composables" / "scanner.ts")
+    assert "event.key === 'Enter'" in scanner
+    assert "options.onSubmit()" in scanner
+    assert "requestAnimationFrame(apply)" in scanner
+    assert "setTimeout(apply, 180)" in scanner
+
+    # Navigation per role (formerly allowedViews()).
+    assert menu_pages()["WAREHOUSE"] == ["batch-gen", "batch-entry", "inbound-receipts", "production-orders", "scan-gun", "batch-trace", "my-records"]
+    assert menu_pages()["OPERATIONS"] == ["products", "purchase-orders", "batch-trace", "inventory-sync"]
+    assert set(pages()["batch-entry"]["roles"]) == {"ADMIN", "WAREHOUSE"}
+    assert set(pages()["my-records"]["roles"]) == {"ADMIN", "WAREHOUSE"}
+    assert {"users", "suppliers"} <= set(menu_pages()["ADMIN"])
+    # Cross-links: a stock alert opens its supplier, a supplier its products.
+    assert "name: 'supplier-detail'" in page_source("dashboard")
+    assert "name: 'product-detail'" in page_source("suppliers")
+
+    # Styles: the trace filters and genealogy parts exist; no decorative gradients.
+    app_css = read(SRC / "assets" / "styles" / "pts.css")
+    assert ".pts-filter-bar" in app_css
+    assert ".pts-genealogy-part img" in app_css
+    own_styles = app_css + "\n".join(read(path) for path in source_files(".vue", base=VIEWS))
+    assert "linear-gradient" not in own_styles
+    assert "radial-gradient" not in own_styles
+
+    # Structural invariants of every page component.
+    for path in source_files(".vue", base=VIEWS):
+        template = template_of(read(path))
+        ids = static_ids(template)
+        assert len(ids) == len(set(ids)), f"{path.name}: 重复的 id {sorted({i for i in ids if ids.count(i) > 1})}"
+        assert "v-html" not in template, f"{path.name}: v-html 会绕过转义"
+        assert not re.search(r"\sstyle=\"", template), f"{path.name}: 静态 style 属性违反 CSP"
+        for tag in opening_tags(template, "ElButton") + opening_tags(template, "button"):
+            actionable = any(
+                attribute in tag
+                for attribute in ("@click", 'native-type="submit"', 'type="submit"', "href", "disabled")
+            )
+            assert actionable, f"{path.name}: 没有操作的按钮 {tag}"
 
 
 def test_missing_routes_keep_their_http_status_without_internal_error(client):

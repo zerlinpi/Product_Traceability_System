@@ -9,7 +9,8 @@ Every function is pure: standard library plus :class:`~traceability.errors.ApiEr
 No Flask, no database, no application configuration — that is what makes them
 testable and safe to share.
 
-``app.py`` re-exports all of them, so existing imports keep working.
+Import them from here; ``app.py`` only uses ``now_iso`` (the default clock) and
+no longer re-exports the rest.
 """
 
 from __future__ import annotations
@@ -71,6 +72,28 @@ def coerce_export_number(value: object) -> int | float | None:
         return None
 
 
+# Leading characters that make Excel / WPS / LibreOffice read a cell as a
+# formula (CSV / formula injection, CWE-1236). Tab and CR are included because
+# some spreadsheet programs strip them before parsing the rest of the cell.
+SPREADSHEET_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def looks_like_spreadsheet_formula(value: object) -> bool:
+    """Whether a text value would be evaluated if typed into a spreadsheet cell."""
+    return isinstance(value, str) and value.startswith(SPREADSHEET_FORMULA_PREFIXES)
+
+
+def csv_safe_row(values: list[object]) -> list[object]:
+    """Neutralise text that a spreadsheet would run as a formula when opening a CSV.
+
+    Names, supplier serials and other typed text end up in the QR-code archive
+    manifests, which are usually opened in Excel. Formula-like text gets the
+    leading apostrophe OWASP recommends, so ``=HYPERLINK(...)`` in a supplier
+    name is shown as text instead of executing. Numbers pass through untouched.
+    """
+    return [f"'{value}" if looks_like_spreadsheet_formula(value) else value for value in values]
+
+
 def safe_archive_name(value: object, fallback: str = "item") -> str:
     """A filename that is safe on both Windows and Linux.
 
@@ -107,6 +130,95 @@ def detect_product_image_type(data: bytes) -> tuple[str, str]:
     if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "webp", "image/webp"
     raise ApiError("仅支持 PNG、JPG、GIF 或 WEBP 图片")
+
+
+# JPEG start-of-frame markers (baseline, progressive, lossless, arithmetic).
+# 0xC4 (DHT), 0xC8 (JPG) and 0xCC (DAC) share the range but carry no size.
+_JPEG_SOF_MARKERS = frozenset(range(0xC0, 0xD0)) - {0xC4, 0xC8, 0xCC}
+# Markers without a length field: TEM and RST0-7 (SOI / EOI never appear mid-scan).
+_JPEG_STANDALONE_MARKERS = frozenset({0x01, *range(0xD0, 0xD8)})
+
+
+def _jpeg_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Walk the JPEG segments up to the first start-of-frame header."""
+    position = 2  # after SOI
+    length = len(data)
+    while position < length:
+        if data[position] != 0xFF:
+            return None
+        # Any number of 0xFF fill bytes may precede the marker.
+        while position < length and data[position] == 0xFF:
+            position += 1
+        if position >= length:
+            return None
+        marker = data[position]
+        position += 1
+        if marker in _JPEG_STANDALONE_MARKERS:
+            continue
+        if marker in (0xD8, 0xD9, 0xDA):
+            # SOI again, EOI or start-of-scan before any frame header.
+            return None
+        if position + 2 > length:
+            return None
+        segment_length = int.from_bytes(data[position:position + 2], "big")
+        if segment_length < 2:
+            return None
+        if marker in _JPEG_SOF_MARKERS:
+            if position + 7 > length:
+                return None
+            height = int.from_bytes(data[position + 3:position + 5], "big")
+            width = int.from_bytes(data[position + 5:position + 7], "big")
+            return width, height
+        position += segment_length
+    return None
+
+
+def _webp_dimensions(data: bytes) -> tuple[int, int] | None:
+    chunk = data[12:16]
+    if chunk == b"VP8X" and len(data) >= 30:
+        # Extended format: 24-bit canvas width-1 / height-1.
+        width = int.from_bytes(data[24:27], "little") + 1
+        height = int.from_bytes(data[27:30], "little") + 1
+        return width, height
+    if chunk == b"VP8 " and len(data) >= 30 and data[23:26] == b"\x9d\x01\x2a":
+        # Lossy: 14-bit sizes after the key-frame start code.
+        width = int.from_bytes(data[26:28], "little") & 0x3FFF
+        height = int.from_bytes(data[28:30], "little") & 0x3FFF
+        return width, height
+    if chunk == b"VP8L" and len(data) >= 25 and data[20] == 0x2F:
+        # Lossless: 14-bit width-1 and height-1 packed after the signature byte.
+        bits = int.from_bytes(data[21:25], "little")
+        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    return None
+
+
+def image_dimensions(data: bytes, extension: str) -> tuple[int, int]:
+    """Return ``(width, height)`` in pixels from the image header.
+
+    Only the header is read, never the pixels, so a small file that would
+    decode into an enormous bitmap (a decompression bomb) is caught before it
+    is stored and later rendered in every operator's browser. A header this
+    parser cannot read is refused: a picture no browser could size is not a
+    picture worth storing, and failing closed keeps the size check honest.
+    """
+    dimensions: tuple[int, int] | None = None
+    if extension == "png" and len(data) >= 24 and data[12:16] == b"IHDR":
+        dimensions = (
+            int.from_bytes(data[16:20], "big"),
+            int.from_bytes(data[20:24], "big"),
+        )
+    elif extension == "gif" and len(data) >= 10:
+        dimensions = (
+            int.from_bytes(data[6:8], "little"),
+            int.from_bytes(data[8:10], "little"),
+        )
+    elif extension == "jpg":
+        dimensions = _jpeg_dimensions(data)
+    elif extension == "webp":
+        dimensions = _webp_dimensions(data)
+    if not dimensions or dimensions[0] <= 0 or dimensions[1] <= 0:
+        raise ApiError("图片文件已损坏或不完整，无法识别尺寸")
+    return dimensions
 
 
 def business_id(value: object, label: str) -> int:

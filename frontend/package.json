@@ -1,0 +1,27 @@
+{
+  "name": "pts-frontend",
+  "type": "module",
+  "version": "1.0.0",
+  "private": true,
+  "description": "聚星同创仓库管理系统前端（基于 Fantastic-admin 基础版 v6.4.0，MIT）",
+  "packageManager": "pnpm@11.18.0",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @pts/web run dev",
+    "build": "pnpm --filter @pts/web run build",
+    "typecheck": "pnpm --filter @pts/web run typecheck",
+    "e2e": "node e2e/smoke.mjs"
+  },
+  "devDependencies": {
+    "@fantastic-admin/themes": "workspace:*",
+    "@iconify/json": "catalog:",
+    "@types/node": "catalog:",
+    "@unocss/core": "catalog:",
+    "playwright-core": "1.63.0",
+    "typescript": "catalog:",
+    "unocss": "catalog:",
+    "unocss-preset-animations": "catalog:"
+  }
+}

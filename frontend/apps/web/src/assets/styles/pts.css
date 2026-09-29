@@ -1,0 +1,1278 @@
+/*
+ * 聚星同创仓库管理系统 — application styles layered on top of Fantastic-admin.
+ *
+ * Design rules (SYSTEM_ARCHITECTURE.md §7): neutral grey/white surfaces, green
+ * only for primary actions / enabled / passed / success, amber for pending and
+ * low stock, red for hold / out of stock / danger. No gradients, no heavy
+ * shadows; hierarchy comes from headings, spacing, borders and table density.
+ */
+
+:root {
+  --pts-success: oklch(0.53 0.14 149);
+  --pts-warning: oklch(0.7 0.15 70);
+  --pts-danger: oklch(0.577 0.245 27.325);
+  --pts-info: oklch(0.556 0 0);
+}
+
+/* ---- role badge in the account button ---------------------------------- */
+.pts-role-badge {
+  display: inline-block;
+  padding: 0 6px;
+  margin-inline-start: 6px;
+  font-size: 11px;
+  line-height: 18px;
+  color: oklch(var(--muted-foreground));
+  vertical-align: 1px;
+  background: oklch(var(--muted));
+  border-radius: 9px;
+}
+
+.pts-role-badge[data-role="ADMIN"] {
+  color: oklch(var(--primary));
+  background: oklch(var(--primary) / 10%);
+}
+
+/* ---- page scaffolding ---------------------------------------------------- */
+.pts-page {
+  padding-bottom: 16px;
+}
+
+.pts-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.pts-toolbar-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.pts-muted {
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 12.5px;
+  word-break: break-all;
+}
+
+.pts-cell-main {
+  display: block;
+  font-weight: 500;
+}
+
+.pts-cell-sub {
+  display: block;
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-text-danger {
+  color: var(--pts-danger);
+}
+
+.pts-text-warning {
+  color: var(--pts-warning);
+}
+
+.pts-text-success {
+  color: var(--pts-success);
+}
+
+/* ---- metric cards -------------------------------------------------------- */
+.pts-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.pts-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  background: oklch(var(--card));
+  border: 1px solid oklch(var(--border));
+  border-radius: 10px;
+}
+
+.pts-metric-label {
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-metric-value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.pts-metric-hint {
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-metric[data-tone="danger"] .pts-metric-value {
+  color: var(--pts-danger);
+}
+
+.pts-metric[data-tone="warning"] .pts-metric-value {
+  color: var(--pts-warning);
+}
+
+.pts-metric[data-tone="success"] .pts-metric-value {
+  color: var(--pts-success);
+}
+
+/* ---- scan pages ---------------------------------------------------------- */
+.pts-scan-box .el-input__wrapper {
+  min-height: 52px;
+  font-size: 18px;
+}
+
+.pts-scan-box .el-input__inner {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  letter-spacing: 0.3px;
+}
+
+.pts-scan-feedback {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  margin-top: 14px;
+  border: 1px solid oklch(var(--border));
+  border-radius: 8px;
+  outline: none;
+}
+
+.pts-scan-feedback strong {
+  font-size: 15px;
+}
+
+.pts-scan-feedback span {
+  font-size: 13px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-scan-feedback[data-tone="success"] {
+  background: oklch(0.53 0.14 149 / 8%);
+  border-color: oklch(0.53 0.14 149 / 45%);
+}
+
+.pts-scan-feedback[data-tone="success"] strong {
+  color: var(--pts-success);
+}
+
+.pts-scan-feedback[data-tone="error"] {
+  background: oklch(0.577 0.245 27.325 / 7%);
+  border-color: oklch(0.577 0.245 27.325 / 45%);
+}
+
+.pts-scan-feedback[data-tone="error"] strong {
+  color: var(--pts-danger);
+}
+
+.pts-step-label {
+  display: inline-block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+/* ---- key/value lists ----------------------------------------------------- */
+.pts-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 16px;
+  font-size: 13px;
+}
+
+.pts-kv dt {
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-kv dd {
+  margin: 0;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+/* ---- QR previews --------------------------------------------------------- */
+.pts-qr {
+  display: block;
+  width: 160px;
+  height: 160px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid oklch(var(--border));
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
+.pts-qr.small {
+  width: 96px;
+  height: 96px;
+}
+
+/* ---- empty state --------------------------------------------------------- */
+.pts-empty {
+  padding: 28px 16px;
+  font-size: 13px;
+  color: oklch(var(--muted-foreground));
+  text-align: center;
+}
+
+/* Tables: keep dense data on one line where possible, never letter-by-letter. */
+.el-table .cell {
+  word-break: normal;
+}
+
+@media print {
+  .pts-no-print {
+    display: none !important;
+  }
+
+  /* utils/print.ts: print only the marked element. */
+  body.pts-printing * {
+    visibility: hidden !important;
+  }
+
+  body.pts-printing .pts-print-root,
+  body.pts-printing .pts-print-root * {
+    visibility: visible !important;
+  }
+
+  body.pts-printing .pts-print-root {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+  }
+
+  body.pts-printing .pts-print-root .pts-no-print {
+    display: none !important;
+  }
+}
+
+/* A grid of printable QR labels (code sets, production QR). */
+.pts-label-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.pts-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  padding: 10px;
+  text-align: center;
+  break-inside: avoid;
+  border: 1px solid oklch(var(--border));
+  border-radius: 8px;
+}
+
+.pts-label img {
+  width: 140px;
+  height: 140px;
+  image-rendering: pixelated;
+}
+
+.pts-label-code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  word-break: break-all;
+}
+
+/*
+ * reka-ui's ScrollArea hides the native scrollbar with an inline <style>
+ * element that is allowed by hash in the server CSP. The same rules live here
+ * as well, so the custom scrollbar stays clean even if the hash ever drifts.
+ */
+[data-reka-scroll-area-viewport] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+[data-reka-scroll-area-viewport]::-webkit-scrollbar {
+  display: none;
+}
+
+/* ==========================================================================
+ * 数据概览（views/dashboard）与产品查询（views/trace）
+ * Panels, task / alert / activity lists, date-grouped tables, product cards,
+ * the genealogy dialog and the scan-friendly record editor.
+ * ======================================================================== */
+
+/* Dialogs never overflow a narrow screen. */
+.el-dialog.pts-dialog-fluid {
+  max-width: calc(100vw - 32px);
+}
+
+/* ---- panels ---------------------------------------------------------------- */
+.pts-panel {
+  min-width: 0;
+  overflow: hidden;
+  background: oklch(var(--card));
+  border: 1px solid oklch(var(--border));
+  border-radius: 10px;
+}
+
+.pts-panel-heading {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 52px;
+  padding: 10px 16px;
+  border-bottom: 1px solid oklch(var(--border));
+}
+
+.pts-panel-heading h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pts-panel-heading p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+/* A table flush with the panel edges: the panel border is the bottom line. */
+.pts-panel .el-table__inner-wrapper::before {
+  display: none;
+}
+
+.pts-panel .el-table__body tr:last-child > td.el-table__cell {
+  border-bottom-color: transparent;
+}
+
+/* ---- 今日待办 ---------------------------------------------------------------- */
+.pts-task-type {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  font-size: 16px;
+  color: oklch(var(--muted-foreground));
+  background: oklch(var(--muted));
+  border-radius: 8px;
+}
+
+.pts-task-type[data-tone="danger"] {
+  color: var(--pts-danger);
+  background: oklch(0.577 0.245 27.325 / 10%);
+}
+
+.pts-task-type[data-tone="warning"] {
+  color: var(--pts-warning);
+  background: oklch(0.7 0.15 70 / 14%);
+}
+
+/* ---- 库存预警 ---------------------------------------------------------------- */
+.pts-alert-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 60px;
+}
+
+.pts-alert-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  min-height: 60px;
+  padding: 10px 16px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid oklch(var(--border));
+}
+
+.pts-alert-item:last-of-type {
+  border-bottom: 0;
+}
+
+.pts-alert-item:hover {
+  background: oklch(var(--muted) / 60%);
+}
+
+.pts-alert-item:focus-visible {
+  outline: 2px solid oklch(var(--ring));
+  outline-offset: -2px;
+}
+
+.pts-alert-severity {
+  padding: 3px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border-radius: 6px;
+}
+
+.pts-alert-severity[data-level="out"] {
+  color: var(--pts-danger);
+  background: oklch(0.577 0.245 27.325 / 10%);
+}
+
+.pts-alert-severity[data-level="low"] {
+  color: var(--pts-warning);
+  background: oklch(0.7 0.15 70 / 14%);
+}
+
+.pts-alert-copy {
+  min-width: 0;
+}
+
+.pts-alert-copy strong,
+.pts-alert-copy span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.pts-alert-copy strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.pts-alert-copy span {
+  margin-top: 2px;
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-alert-balance {
+  min-width: 72px;
+  text-align: right;
+}
+
+.pts-alert-balance b,
+.pts-alert-balance small {
+  display: block;
+}
+
+.pts-alert-balance b {
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pts-alert-balance small {
+  margin-top: 2px;
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+/* ---- 最近操作 ---------------------------------------------------------------- */
+.pts-activity-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.pts-activity-item {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 60px;
+  padding: 10px 16px;
+  border-bottom: 1px solid oklch(var(--border));
+}
+
+.pts-activity-marker {
+  width: 6px;
+  height: 6px;
+  background: oklch(var(--primary));
+  border-radius: 50%;
+}
+
+.pts-activity-copy {
+  min-width: 0;
+}
+
+.pts-activity-line {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-activity-line time {
+  font-variant-numeric: tabular-nums;
+}
+
+.pts-activity-copy p {
+  margin: 3px 0 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.pts-activity-more {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  font: inherit;
+  font-size: 13px;
+  color: oklch(var(--primary));
+  text-align: center;
+  background: transparent;
+  border: 0;
+}
+
+.pts-activity-more:hover {
+  background: oklch(var(--muted) / 60%);
+}
+
+.pts-activity-more:focus-visible {
+  outline: 2px solid oklch(var(--ring));
+  outline-offset: -2px;
+}
+
+/* ---- bulk selection toolbar ---------------------------------------------------- */
+.pts-bulk-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  min-height: 44px;
+  padding: 6px 16px;
+  font-size: 13px;
+  background: oklch(var(--muted) / 45%);
+  border-bottom: 1px solid oklch(var(--border));
+}
+
+.pts-bulk-toolbar .pts-bulk-action {
+  margin-left: auto;
+}
+
+/* ---- filter bars ----------------------------------------------------------------- */
+.pts-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+
+.pts-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pts-filter-field > label {
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-filter-grow {
+  flex: 1 1 220px;
+  max-width: 360px;
+}
+
+/* ---- date header rows of grouped tables ---------------------------------------- */
+.el-table .pts-date-group-row > td.el-table__cell {
+  background: oklch(var(--muted) / 70%);
+}
+
+.pts-date-group {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.pts-date-group strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pts-date-group span {
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+/* ---- 产品查询：product cards ----------------------------------------------------- */
+.pts-product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.pts-product-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  min-height: 132px;
+  padding: 18px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: oklch(var(--card));
+  border: 1px solid oklch(var(--border));
+  border-radius: 10px;
+  transition: border-color 0.15s;
+}
+
+.pts-product-card:hover {
+  border-color: oklch(var(--primary) / 55%);
+}
+
+.pts-product-card:focus-visible {
+  outline: 2px solid oklch(var(--ring));
+  outline-offset: 2px;
+}
+
+.pts-product-card h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.pts-product-card p {
+  margin: 0;
+  font-size: 13px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-product-card strong {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  margin-top: auto;
+  font-size: 13px;
+  font-weight: 500;
+  color: oklch(var(--primary));
+}
+
+/* ---- 产品族谱 dialog --------------------------------------------------------------- */
+.pts-genealogy-overview {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.2fr);
+  gap: 12px;
+}
+
+.pts-genealogy-main {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid oklch(var(--border));
+  border-radius: 10px;
+}
+
+.pts-genealogy-main img.genealogy-main-qr {
+  flex: none;
+  width: 118px;
+  height: 118px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid oklch(var(--border));
+  border-radius: 8px;
+  image-rendering: pixelated;
+}
+
+.pts-genealogy-main-copy {
+  min-width: 0;
+}
+
+.pts-genealogy-main-copy span,
+.pts-genealogy-main-copy strong,
+.pts-genealogy-main-copy small {
+  display: block;
+}
+
+.pts-genealogy-main-copy span {
+  font-size: 12px;
+  color: oklch(var(--primary));
+}
+
+.pts-genealogy-main-copy strong {
+  margin-top: 6px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.pts-genealogy-main-copy small {
+  margin-top: 6px;
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-genealogy-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.pts-genealogy-summary {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid oklch(var(--border));
+  border-radius: 8px;
+}
+
+.pts-genealogy-summary > span {
+  display: block;
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-genealogy-summary-value {
+  margin-top: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.pts-genealogy-section {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  margin-top: 20px;
+  border-bottom: 1px solid oklch(var(--border));
+}
+
+.pts-genealogy-section span,
+.pts-genealogy-section strong {
+  display: block;
+}
+
+.pts-genealogy-section span {
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-genealogy-section strong {
+  margin-top: 2px;
+  font-size: 14px;
+}
+
+.pts-genealogy-section small {
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-genealogy-parts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+  padding: 0;
+  margin: 12px 0 0;
+  list-style: none;
+}
+
+.pts-genealogy-part {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid oklch(var(--border));
+  border-radius: 8px;
+}
+
+.pts-genealogy-part-index {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+  font-weight: 600;
+  background: oklch(var(--muted));
+  border-radius: 50%;
+}
+
+.pts-genealogy-part img {
+  flex: none;
+  width: 82px;
+  height: 82px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid oklch(var(--border));
+  border-radius: 6px;
+  image-rendering: pixelated;
+}
+
+.pts-genealogy-part-copy {
+  min-width: 0;
+}
+
+.pts-genealogy-part-copy strong,
+.pts-genealogy-part-copy span,
+.pts-genealogy-part-copy code,
+.pts-genealogy-part-copy small {
+  display: block;
+}
+
+.pts-genealogy-part-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pts-genealogy-part-copy span,
+.pts-genealogy-part-copy code {
+  margin-top: 3px;
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+  word-break: break-all;
+}
+
+.pts-genealogy-part-copy code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+.pts-genealogy-part-copy small {
+  margin-top: 5px;
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+@media (max-width: 720px) {
+  .pts-genealogy-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .pts-genealogy-main {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* ---- 修改录入记录：scan-friendly part-code editor ------------------------------------ */
+.pts-scan-edit-hint {
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  background: oklch(var(--primary) / 6%);
+  border: 1px solid oklch(var(--primary) / 30%);
+  border-radius: 8px;
+}
+
+.pts-scan-edit-hint strong,
+.pts-scan-edit-hint span {
+  display: block;
+}
+
+.pts-scan-edit-hint strong {
+  font-size: 13px;
+  color: oklch(var(--primary));
+}
+
+.pts-scan-edit-hint span {
+  margin-top: 3px;
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-record-part-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pts-record-part-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pts-record-part-label {
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+/* Native inputs styled as Element Plus inputs: mirror its focus ring. */
+.pts-record-part-field .el-input__wrapper:focus-within {
+  box-shadow: 0 0 0 1px var(--el-input-focus-border-color, var(--el-color-primary)) inset;
+}
+
+.pts-record-part-field .record-scan-input {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+/* The box that currently receives scanned characters. */
+.pts-record-part-field .el-input.pts-scan-target .el-input__wrapper {
+  box-shadow:
+    0 0 0 1px oklch(var(--primary)) inset,
+    0 0 0 3px oklch(var(--primary) / 16%);
+}
+
+.pts-record-part-field .el-input.pts-input-error .el-input__wrapper {
+  box-shadow: 0 0 0 1px var(--el-color-danger) inset;
+}
+
+.pts-field-error {
+  font-size: 12px;
+  color: var(--el-color-danger);
+}
+
+/* ==========================================================================
+ * 产品管理 / 供应商 / 用户管理 pages
+ * (views/products/**, views/suppliers/**, views/users/**)
+ * ========================================================================== */
+
+/* Product thumbnail (主图) in the product list. */
+.pts-thumb {
+  display: block;
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  background: oklch(var(--muted));
+  border: 1px solid oklch(var(--border));
+  border-radius: 6px;
+}
+
+.pts-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: oklch(var(--muted-foreground));
+}
+
+/* A table cell's primary text rendered as a link button (keyboard reachable). */
+.el-button.pts-cell-link {
+  height: auto;
+  padding: 0;
+  font-weight: 500;
+  text-align: left;
+  white-space: normal;
+}
+
+.el-button.pts-cell-link > span {
+  white-space: normal;
+}
+
+.pts-empty-compact {
+  padding: 16px;
+}
+
+/* Product form: 产品资料 inputs in a responsive grid; pictures and long texts span the row. */
+.pts-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0 16px;
+}
+
+.pts-form-grid > .pts-form-wide {
+  grid-column: 1 / -1;
+}
+
+/* System-maintained profile columns (SKU / 品名 / 创建人 …), read-only. */
+.pts-auto-field {
+  padding: 5px 10px;
+  background: oklch(var(--muted) / 50%);
+  border: 1px solid oklch(var(--border));
+  border-radius: 6px;
+}
+
+.pts-auto-field small,
+.pts-auto-field b {
+  display: block;
+}
+
+.pts-auto-field small {
+  font-size: 11px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-auto-field b {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+/* 主图 upload: preview beside the picker. */
+.pts-image-field {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.pts-image-preview {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 92px;
+  height: 92px;
+  overflow: hidden;
+  background: oklch(var(--muted) / 50%);
+  border: 1px dashed oklch(var(--border));
+  border-radius: 8px;
+}
+
+.pts-image-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* BOM editor rows: supplier → part → batch → quantity → remove. */
+.pts-component-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr) 120px auto;
+  gap: 0 12px;
+  align-items: end;
+  padding: 12px 12px 0;
+  margin-bottom: 10px;
+  border: 1px solid oklch(var(--border));
+  border-radius: 8px;
+}
+
+.pts-component-row-actions {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  margin-bottom: 18px;
+}
+
+@media (max-width: 768px) {
+  .pts-component-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pts-component-row-actions {
+    margin-top: -8px;
+  }
+}
+
+/* Code generation: the auto-completed set code preview. */
+.pts-code-rule {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  background: oklch(var(--muted) / 50%);
+  border: 1px solid oklch(var(--border));
+  border-radius: 8px;
+}
+
+.pts-code-rule span {
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-code-rule strong {
+  font-family: ui-monospace, "Cascadia Code", Consolas, "Liberation Mono", monospace;
+  font-size: 14px;
+  letter-spacing: 0.3px;
+}
+
+/* Product detail: filled 产品资料 columns. */
+.pts-attr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  background: oklch(var(--border));
+  border: 1px solid oklch(var(--border));
+  border-radius: 8px;
+}
+
+.pts-attr-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: oklch(var(--card));
+}
+
+.pts-attr-label {
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-attr-value {
+  font-size: 13px;
+  font-weight: 500;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.pts-attr-image {
+  display: inline-block;
+  width: 96px;
+  height: 96px;
+  overflow: hidden;
+  background: oklch(var(--muted) / 50%);
+  border: 1px solid oklch(var(--border));
+  border-radius: 6px;
+}
+
+.pts-attr-image img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Generation batch QR view: one card per code set (main code + part codes). */
+.pts-code-set {
+  padding: 14px;
+  break-inside: avoid;
+  border: 1px solid oklch(var(--border));
+  border-radius: 8px;
+}
+
+.pts-code-set-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.pts-label.pts-label-main {
+  background: oklch(var(--primary) / 5%);
+  border-color: oklch(var(--primary) / 35%);
+}
+
+@media print {
+  .pts-code-set {
+    border: 0;
+  }
+
+  .pts-label.pts-label-main {
+    background: none;
+  }
+}
+
+/* ==========================================================================
+ * 采购与生产 · 库存同步 · 系统设置
+ * (views/purchase-orders, inbound-receipts, production-orders,
+ * inventory-sync, settings). Page-owned section; the shared rules above are
+ * unchanged.
+ * ========================================================================== */
+
+/* 采购订单: the collapsible 更多字段 group of the template form. */
+.pts-po-more {
+  --el-collapse-border-color: transparent;
+
+  margin-top: 4px;
+}
+
+.pts-po-more .el-collapse-item__header {
+  padding: 0 12px;
+  font-weight: 600;
+  color: oklch(var(--foreground));
+  background: oklch(var(--muted));
+  border-radius: 8px;
+}
+
+.pts-po-more .el-collapse-item__wrap {
+  background: transparent;
+}
+
+.pts-po-more .el-collapse-item__content {
+  padding: 16px 0 0;
+}
+
+/* 供应收货: the selected purchase order's 订单明细. */
+.pts-order-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.pts-order-summary-item {
+  min-width: 0;
+  padding: 8px 12px;
+  background: oklch(var(--card));
+  border: 1px solid oklch(var(--border));
+  border-radius: 8px;
+}
+
+.pts-order-summary-item dt {
+  font-size: 12px;
+  color: oklch(var(--muted-foreground));
+}
+
+.pts-order-summary-item dd {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.pts-order-summary-empty {
+  border: 1px dashed oklch(var(--border));
+  border-radius: 8px;
+}
+
+/* 生产订单: QR thumbnail in the list (opens the view / print dialog). */
+.pts-qr-thumb-button {
+  display: inline-block;
+  flex: none;
+  padding: 3px;
+  line-height: 0;
+  cursor: pointer;
+  background: #fff;
+  border: 1px solid oklch(var(--border));
+  border-radius: 6px;
+}
+
+.pts-qr-thumb-button:hover {
+  border-color: oklch(var(--primary));
+}
+
+.pts-qr-thumb-button:focus-visible {
+  outline: 2px solid oklch(var(--ring));
+  outline-offset: 2px;
+}
+
+.pts-qr-thumb {
+  display: block;
+  width: 46px;
+  height: 46px;
+  image-rendering: pixelated;
+}
+
+/* 生产订单: the printable production QR label (always dark on white). */
+.pts-production-qr-label {
+  padding: 20px;
+  color: #111;
+  background: #fff;
+}
+
+.pts-production-qr-label img {
+  width: 240px;
+  height: 240px;
+}
+
+.pts-production-qr-label strong {
+  font-size: 15px;
+}
+
+.pts-production-qr-label .pts-label-code {
+  font-size: 13px;
+  color: #555;
+}

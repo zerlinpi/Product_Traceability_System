@@ -206,28 +206,42 @@ def check_python_versions() -> None:
             )
 
 
-def check_frontend_entry() -> None:
-    """The served template must be the one the docs call the live one.
+#: How GET / may hand out the page: the built SPA entry file, or (historically)
+#: a Jinja template. Either way the argument is the path of the file served.
+_ENTRY_ROUTE_RE = re.compile(
+    r'@app\.get\("/"\)\s*\n\s*def \w+\([^)]*\):\s*\n\s*'
+    r'return (?:frontend_entry_response|render_template)\("([^"]+)"\)'
+)
 
-    Two templates that both look current is how a fix lands in the file nobody
-    loads, so the entry point is pinned to the route that actually renders it.
+#: Any mention of an entry page in the docs, with whatever directory prefix it
+#: carries (``static/dist/index.html``, ``templates/index_v2.html``, a bare
+#: ``index.html`` …). The whole mention is compared, so a doc cannot point at
+#: a different file that merely shares the base name.
+_ENTRY_MENTION_RE = re.compile(r"(?<![\w./-])((?:[\w.-]+/)*index(?:_v2)?\.html)")
+
+
+def check_frontend_entry() -> None:
+    """The served entry page must be the one the docs call the live one.
+
+    Two entry pages that both look current is how a fix lands in the file
+    nobody loads, so the entry point is pinned to the route that actually
+    serves it, and the file must exist in the repository.
     """
     app_source = read("app.py")
-    match = re.search(
-        r'@app\.get\("/"\)\s*\n\s*def \w+\([^)]*\):\s*\n\s*return render_template\("([^"]+)"\)',
-        app_source,
-    )
+    match = _ENTRY_ROUTE_RE.search(app_source)
     if not match:
-        fail('app.py: 找不到 GET / 渲染的模板')
+        fail("app.py: 找不到 GET / 提供的入口页面")
         return
     served = match.group(1)
+    if "/" in served and not (ROOT / served).is_file():
+        fail(f"app.py: GET / 提供 {served}，但仓库中不存在该文件（前端未构建？）")
 
     for relative in ("README.md", "SYSTEM_ARCHITECTURE.md"):
         text = read(relative)
-        for mentioned in re.findall(r"`?(index(?:_v2)?\.html)`?", text):
+        for mentioned in _ENTRY_MENTION_RE.findall(text):
             if mentioned != served:
                 fail(
-                    f"{relative}: 提到 {mentioned}，但 GET / 实际渲染 {served}"
+                    f"{relative}: 提到 {mentioned}，但 GET / 实际提供 {served}"
                 )
 
 

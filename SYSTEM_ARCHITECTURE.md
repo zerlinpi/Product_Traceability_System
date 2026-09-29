@@ -210,7 +210,8 @@
 
 | 路径 | 职责 | 约束 |
 | --- | --- | --- |
-| `app.py` | 应用工厂 + 路由定义 + 领域序列化 | 正在拆分，见 10.3 |
+| `app.py` | 应用工厂：配置与生产启动守卫、错误处理、`GET /` 与 `GET /favicon.ico`、注册全部蓝图 | 不再定义 API 路由，见 10.3 |
+| `traceability/api/*.py` | HTTP 蓝图，每个领域一个模块 | 不得导入 `app`；守卫写在路由或同文件的模块级函数里（见 10.6、10.8） |
 | `traceability/` | 与 Flask 应用解耦的支撑模块 | **不得**反向导入 `app` |
 | `traceability/auth.py` | 会话、CSRF、角色装饰器、`AuthError` | |
 | `traceability/db.py` | 连接、迁移链、启动清理 | 迁移只能增量 |
@@ -247,10 +248,10 @@
 | 1d | `audit_events.py`（审计写入，蓝图必需） | ✅ 已完成 |
 | 1e | `idempotent_http.py`（幂等请求包装，写接口蓝图必需） | ✅ 已完成 |
 | 1f | `lingxing_writes.py`（领星推送共享管道） | ✅ 已完成 |
-| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | 🔄 进行中（11 个域已完成） |
-| 3 | 领域逻辑外移（库存、批次、采购、生产订单、质量门） | 🔄 进行中 |
+| 2 | 按领域抽蓝图（`traceability/api/*.py`），`create_app` 只注册 | ✅ 已完成（21 个蓝图） |
+| 3 | 领域逻辑外移（库存、批次、采购、生产订单、质量门、产品、BOM、逐台扫码与录入记录、设置、库存同步） | 🔄 进行中 |
 
-已迁出的领域（共 47 条路由；`app.py` 内尚余 53 条，`auth.py` 7 条）：
+已迁出的领域（共 98 条路由；`app.py` 只余 `GET /` 与 `GET /favicon.ico` 2 条，`auth.py` 7 条）：
 
 | 蓝图 | 路由数 | 需先抽出的支撑模块 |
 | --- | --- | --- |
@@ -265,15 +266,31 @@
 | `api/production_orders.py` | 5 | `quality.py`、`production_orders.py` |
 | `api/inbound_receipts.py` | 5 | `receipts.py` |
 | `api/scan_gun.py` | 3 | —（复用 `production_orders.py`、`quality.py`） |
+| `api/dashboard.py` | 3 | `trace_records.py` |
+| `api/settings.py` | 3 | `settings_service.py` |
+| `api/products.py` | 6 | `products.py`、`trace_plans.py` |
+| `api/code_sets.py` | 7 | `code_sets.py`、`legacy_scan.py` |
+| `api/batch_records.py` | 5 | —（复用 `production.py`） |
+| `api/supplier_inventory.py` | 5 | `production.py`（并入正向追溯） |
+| `api/part_labels.py` | 9 | —（复用 `trace_plans.py`） |
+| `api/scan_sessions.py` | 4 | `legacy_scan.py`（补入工位会话） |
+| `api/records.py` | 7 | —（复用 `trace_records.py`、`trace_plans.py`、`legacy_scan.py`） |
+| `api/inventory_sync.py` | 2 | `inventory_sync.py` |
 
-`app.py`：8949 → 约 5430 行。
+`/api/health` 在 `api/dashboard.py`；它免登录是因为 `auth.before_request`
+按**路径**豁免，与所在文件无关。
+
+`app.py`：8949 → 245 行，只剩应用工厂。测试仍从 `app` 导入的名字
+（`LEGACY_ENTRY_DISABLED_MESSAGE`、`LINGXING_TOKEN_CACHE`、
+`PRODUCT_ATTRIBUTE_COLUMNS` / `PRODUCT_ATTRIBUTE_DERIVED_COLUMNS`、
+`clean_lingxing_endpoint`、`ApiError`）由 `app.py` 再导出。
 
 ### 10.4 领域模块一览
 
 | 模块 | 职责 |
 | --- | --- |
 | `inventory.py` | 供应商库存扣减（不超卖的保证所在） |
-| `production.py` | **批次**追溯：整批登记、反向追溯到供应商批次 |
+| `production.py` | **批次**追溯：整批登记、反向追溯到供应商批次、从供应批次正向追溯到生产批次 |
 | `production_orders.py` | **生产订单**：由采购订单开出的生产指令 |
 | `receipts.py` | 供应收货（入库收货）的读取与序列化 |
 | `purchasing.py` | 采购订单：规则、推送语义、48 列模板 |
@@ -281,9 +298,20 @@
 | `lingxing_writes.py` | 领星推送管道（采购单/入库单/库存同步共用） |
 | `lingxing.py` | 领星 API 客户端（HTTP/签名/令牌/重试） |
 | `xlsx_export.py` | Excel 构造 |
+| `products.py` | 产品目录：扩展资料列（外部模板契约）与清洗、产品配置载荷（含批量列表） |
+| `trace_plans.py` | BOM（追溯计划）读取：槽位、计划载荷、每个产品的部件数上限 |
+| `code_sets.py` | **逐台**产品套码（一台一套主码 + 部件码）的载荷 |
+| `legacy_scan.py` | **逐台**扫码流程：走步机停用规则、工位会话状态 |
+| `trace_records.py` | **逐台**录入记录的读模型（看板、扫码工位、记录/谱系/导出共用） |
+| `settings_service.py` | 领星设置：写入接口地址校验（出站策略）、各写入接口是否已配置、设置页脱敏载荷 |
+| `inventory_sync.py` | 库存同步：进行中标记与结果记录、按产品同步状态、领星收货单查询与快捷入库 |
 
 > `production.py` 与 `production_orders.py` 名字相近但**实体不同**：
 > 前者是**批次**，后者是**订单**。改其中一个前先确认改对了。
+>
+> 蓝图与领域模块同名时（`production_orders`、`products`、`code_sets`、`inventory_sync`），
+> `traceability/api/` 下的是 HTTP 层（路由、守卫、事务与写入），
+> `traceability/` 下的是领域逻辑。
 >
 > 中文语境下还有一对容易混的：**供应收货**（`receipts.py`，`/api/inbound-receipts`，
 > 供应商部件到货并推领星）与**成品扫码入库**（`/api/scan-gun/*`，
@@ -319,16 +347,30 @@
 被扫码枪入库共用 → 留在 `production_orders.py`，由两边共同导入。
 **共用的 helper 不跟着某一个领域走，它跟着「用它的所有人」走。**
 
+迁出最后 51 条路由时按同一判据：
+
+* `fetch_records` 被看板、扫码工位、录入记录/谱系/导出共用 → `trace_records.py`；
+* `trace_plan_slots` / `trace_plan_dict` / `get_plan_summary` 与 `MAX_REQUIRED_PARTS`
+  被产品、BOM 路由、扫码工位与记录校对共用 → `trace_plans.py`；
+* 走步机停用规则（`is_treadmill_product_model`、`LEGACY_ENTRY_DISABLED_MESSAGE`）
+  被套码生成与扫码工位共用 → `legacy_scan.py`；
+* 原本就是 `create_app()` 内嵌函数、且只被同一蓝图使用的 helper
+  （`write_code_sets_zip`、`product_image_dir`、`record_status_payload`、
+  `apply_record_status_updates`）随路由成为蓝图的模块级函数，调用图与写入检测不变。
+
 ### 10.6 守卫必须留在 HTTP 层
 
-`tools/extract_routes.py` 通过**跟踪 `create_app` 内的调用图**解析守卫。
+`tools/extract_routes.py` 通过**跟踪声明路由的那个文件内的调用图**解析守卫
+（`app.py` 为 `create_app()` 内的嵌套函数，蓝图为模块级函数，见 10.8），不跨文件跟随。
 守卫一旦随业务逻辑进入领域模块，提取器就看不见它——
 采购订单搬迁时 `/push` 的有效权限一度从 `ADMIN + OPERATIONS`
 被误报成 `any authenticated`。
 
 **运行时权限没变，但权限文档失真了**，而这份文档是安全评审的依据。
 因此：**授权调用写在路由里**，领域函数只做业务。这既是分层要求，
-也是让静态门禁保持可信的前提。
+也是让静态门禁保持可信的前提。守卫在 helper 里的少数路由
+（`_impl_batch_entry_scan`、`transition_batch_quality`、`editable_record` 等），
+helper 是蓝图文件的模块级函数，而不是领域模块里的函数。
 
 每个阶段都由全量测试与 `tools/extract_routes.py --check`
 （路由与权限文档一致）共同守护。

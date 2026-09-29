@@ -22,7 +22,7 @@ target-version = "py313"
 # comprehensions, SQL strings); E501 is not enabled so that stays a matter of
 # taste rather than a build failure.
 line-length = 110
-extend-exclude = [".venv", "exports", "data", ".hypothesis", "__pycache__"]
+extend-exclude = [".venv", "exports", "data", ".hypothesis", "__pycache__", "frontend"]
 
 [tool.ruff.lint]
 select = [
@@ -64,7 +64,9 @@ ignore = [
 # application, so imports cannot all sit at the top of the file (E402). Test
 # fixtures also legitimately contain passwords and tokens (S105/S106/S107).
 "tests/*.py" = ["E402", "S105", "S106", "S107"]
-"tests/visual_server.py" = ["E402"]
+# The local dev/E2E server inserts the repository root into sys.path before
+# importing the application.
+"tools/dev_server.py" = ["E402"]
 
 # The shipped default and example credentials. They are deliberate, and they are
 # the reason the production startup guard exists: create_app raises unless

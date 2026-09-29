@@ -10,8 +10,8 @@ would have meant three copies of the same push protocol.
 ``traceability/lingxing.py`` remains the API client — HTTP, signing, tokens,
 retry. Nothing here re-implements any of that.
 
-Extracted from ``app.py``; the names are re-exported from there so existing
-imports keep working.
+Extracted from ``app.py``. ``app.py`` still re-exports ``LINGXING_TOKEN_CACHE``
+because tests import it from there; everything else is imported from here.
 """
 
 from __future__ import annotations

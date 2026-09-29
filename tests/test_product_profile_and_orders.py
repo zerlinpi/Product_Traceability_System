@@ -240,6 +240,55 @@ def test_product_profile_partial_update_keeps_stored_columns(tmp_path):
     assert merged["创建人"] == original["创建人"]
 
 
+def test_product_profile_update_clears_columns_sent_as_null_or_blank(tmp_path):
+    app, _database_path, _fake = make_auth_app(tmp_path)
+    admin, csrf = bootstrap_admin(app)
+    product = simple_product(
+        admin,
+        csrf,
+        "可清空资料",
+        attributes={"品牌": "聚星", "采购员": "张三", "产品描述": "旧描述", "单品净重": 12},
+    )
+    assert product["attributes"]["单品净重"] == 12
+
+    updated = created(
+        admin,
+        csrf,
+        f"/api/products/{product['id']}",
+        {
+            "attributes": {
+                "品牌": None,
+                "采购员": "   ",
+                "单品净重": None,
+                # Derived columns cannot be blanked by the client.
+                "SKU": None,
+                "品名": "",
+                "状态": None,
+                # Unknown columns are ignored rather than stored or rejected.
+                "不存在的列": None,
+            }
+        },
+        method="put",
+    )
+    profile = updated["attributes"]
+    # Explicitly blanked columns are removed; untouched ones survive.
+    for column in ("品牌", "采购员", "单品净重", "不存在的列"):
+        assert column not in profile, column
+    assert profile["产品描述"] == "旧描述"
+    assert profile["SKU"] == product["productCode"]
+    assert profile["品名"] == "可清空资料"
+    assert profile["状态"] == "启用"
+
+    # The cleared profile is what is persisted, not just what was echoed back.
+    listed = next(
+        item
+        for item in admin.get("/api/products").get_json()["data"]
+        if item["id"] == product["id"]
+    )
+    assert "品牌" not in listed["attributes"]
+    assert listed["attributes"]["产品描述"] == "旧描述"
+
+
 def test_product_profile_status_follows_the_product_and_rejects_bad_payloads(tmp_path):
     app, _database_path, _fake = make_auth_app(tmp_path)
     admin, csrf = bootstrap_admin(app)

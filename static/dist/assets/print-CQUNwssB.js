@@ -1,0 +1,1 @@
+function e(e){if(!e)return;e.classList.add(`pts-print-root`),document.body.classList.add(`pts-printing`);let t=()=>{e.classList.remove(`pts-print-root`),document.body.classList.remove(`pts-printing`),window.removeEventListener(`afterprint`,t)};window.addEventListener(`afterprint`,t),requestAnimationFrame(()=>{window.print(),setTimeout(t,1e3)})}export{e as t};

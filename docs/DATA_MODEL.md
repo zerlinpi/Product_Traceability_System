@@ -250,7 +250,7 @@ BEGIN SELECT RAISE(ABORT, 'audit_events 是只追加账本，不允许修改既�
 | `production_orders.is_external` | `0` / `1` | 表 CHECK |
 | `supplier_inventory_movements.movement_type` | 入库 / 领用 / 调整 | 应用层 |
 
-### 质量状态转换（`transition_batch_quality()`，`app.py:3872`）
+### 质量状态转换（`transition_batch_quality()`，`traceability/api/batch_records.py`）
 
 ```
 ASSEMBLED --pass--> PASSED     （需 ADMIN）

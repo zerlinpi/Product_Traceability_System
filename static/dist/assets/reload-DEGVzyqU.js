@@ -1,0 +1,1 @@
+import{b as e,ct as t,k as n,mt as r}from"./runtime-core.esm-bundler-kJ0sRhYW.js";import{g as i}from"./useApi-CUgTH_jn-B5m-OAuQ.js";var a=n({__name:`reload`,setup(n){let a=i();return t(()=>{a.go(-1)}),(t,n)=>(r(),e(`div`))}});export{a as default};

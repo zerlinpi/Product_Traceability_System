@@ -17,7 +17,7 @@
 { "ok": true, "data": <任意> }
 ```
 
-由 `app.py:1719` 的 `success(data, status=200)` 产生。
+由 `traceability/responses.py` 的 `success(data, status=200)` 产生。
 
 ### 失败
 
@@ -34,14 +34,14 @@
 
 | 异常 | 状态码 | 处理器位置 |
 | --- | --- | --- |
-| `AuthError` | 由异常自带（401 / 403 / 404 / 409 / 428 / 429） | `auth.py:357` |
-| `ApiError` | 由异常自带（默认 400） | `app.py:1686` |
-| `ValueError` | 400 | `app.py:1690` |
-| `BluetoothCollectionError` | 见实现 | `app.py:1694` |
-| `LingxingError` | 见实现 | `app.py:1698` |
-| `sqlite3.IntegrityError` | 见实现 | `app.py:1702` |
-| `HTTPException` | 原状态码 | `app.py:1707` |
-| 兜底 `Exception` | 500 | `app.py:1714` |
+| `AuthError` | 由异常自带（401 / 403 / 404 / 409 / 428 / 429） | `traceability/auth.py` `handle_auth_error` |
+| `ApiError` | 由异常自带（默认 400） | `app.py` `handle_api_error` |
+| `ValueError` | 400 | `app.py` `handle_value_error` |
+| `BluetoothCollectionError` | 见实现 | `app.py` `handle_bluetooth_error` |
+| `LingxingError` | 见实现 | `app.py` `handle_lingxing_error` |
+| `sqlite3.IntegrityError` | 见实现 | `app.py` `handle_integrity_error` |
+| `HTTPException` | 原状态码 | `app.py` `handle_http_error` |
+| 兜底 `Exception` | 500 | `app.py` `handle_unexpected_error` |
 
 ### 状态码语义（由测试实际断言统计）
 

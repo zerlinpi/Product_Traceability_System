@@ -11,8 +11,8 @@ They are pure: a ``sqlite3.Row`` in, a plain dict out. Several use
 "simplification" would silently return False for every column. See the SIM118
 note in pyproject.toml.
 
-Extracted from ``app.py``; re-exported from there so existing imports keep
-working.
+Extracted from ``app.py``; the blueprints and domain modules import them from
+here.
 """
 
 from __future__ import annotations

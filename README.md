@@ -390,7 +390,7 @@ CI（`.github/workflows/ci.yml`）在 push 与 PR 上运行四个门禁：
 | 门禁 | 作用 |
 | --- | --- |
 | **ruff** | 语法错误、未定义名、未使用导入、真实 bug 模式、精选安全规则 |
-| **权限矩阵同步** | `docs/PERMISSION_MATRIX.md` 必须与 `app.py` 一致，否则文档会静默失真 |
+| **权限矩阵同步** | `docs/PERMISSION_MATRIX.md` 必须与路由代码（`app.py`、`traceability/auth.py`、`traceability/api/*.py`）一致，否则文档会静默失真 |
 | **测试数量守卫** | 收集到的测试数不得低于 `tests/BASELINE_COUNT`——**删掉失败的测试不是修好它的方式** |
 | **pytest + 覆盖率门槛** | Ubuntu 与 Windows 双平台；覆盖率不得低于 82% |
 
