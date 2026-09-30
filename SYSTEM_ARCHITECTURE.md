@@ -444,7 +444,8 @@ Python 的 `from X import y` 把名字**绑定到当前模块的命名空间**�
 
 校验项：数据库版本、路由总数、蓝图是否都被扫描、角色集合、
 Python 支持版本（`pyproject` ↔ CI ↔ README ↔ `install.bat` 四方一致）、
-正式前端入口、关键文档是否存在、**当前文档是否引用了已被删除的文件**。
+正式前端入口、关键文档是否存在（含 `docs/OPERATIONS.md` 与
+`docs/RELEASE_CHECKLIST.md`）、**当前文档是否引用了已被删除的文件**。
 
 > **最后一项的由来**：仓库根目录曾长期放着一份 `docs/archive/design-qa-legacy-ui.md`
 > 的前身——一份**被替换掉的原生 JS 界面**的视觉验收报告。界面替换后它引用的每一张截图

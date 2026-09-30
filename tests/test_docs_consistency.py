@@ -208,6 +208,28 @@ def test_missing_document_is_caught(monkeypatch):
     assert checker.failures, "缺失文档未被发现"
 
 
+def test_operational_documents_are_required():
+    """Removing a doc from the list must be a deliberate act, not an oversight.
+
+    docs/OPERATIONS.md and docs/RELEASE_CHECKLIST.md were listed as 尚未建立 in
+    docs/UPGRADE.md for a long time. Now that they exist, the list is what keeps
+    them existing — without it, deleting one would leave no gate to notice, which
+    is how the gap opened in the first place.
+    """
+    for expected in (
+        "docs/OPERATIONS.md",
+        "docs/RELEASE_CHECKLIST.md",
+        "docs/BACKUP_RESTORE.md",
+        "docs/SECURITY.md",
+    ):
+        assert expected in checker.REQUIRED_DOCUMENTS, f"{expected} 不在必需文档清单中"
+
+
+def test_every_required_document_exists_in_the_repository():
+    missing = [name for name in checker.REQUIRED_DOCUMENTS if not (checker.ROOT / name).is_file()]
+    assert not missing, f"必需文档缺失: {missing}"
+
+
 # --------------------------------------------------------------------------
 # References to files that were deleted
 # --------------------------------------------------------------------------

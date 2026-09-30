@@ -441,6 +441,8 @@ CI（`.github/workflows/ci.yml`）在 push 与 PR 上运行四个门禁：
 | [`docs/API_CONTRACT.md`](docs/API_CONTRACT.md) | 响应信封、状态码语义、幂等机制、领星契约、兼容规则 | 手工维护 |
 | [`docs/PRODUCT_RULES.md`](docs/PRODUCT_RULES.md) | 业务规则基线，含文档与代码的冲突记录与缺口索引 | 手工维护 |
 | [`docs/BACKUP_RESTORE.md`](docs/BACKUP_RESTORE.md) | 备份命令、**恢复演练**、保留策略、异机副本 | 手工维护 |
+| [`docs/OPERATIONS.md`](docs/OPERATIONS.md) | 服务启停、日志位置、日常巡检、账号与登录解锁、数据库健康 | 手工维护 |
+| [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) | 发布门禁清单：CI 查不到的、需要亲手确认的那些 | 手工维护 |
 | [`docs/UPGRADE.md`](docs/UPGRADE.md) | 升级流程、回滚、迁移链、降级保护 | 手工维护 |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | 安全姿态与**已知缺口清单**（按风险排序） | 手工维护 |
 

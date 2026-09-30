@@ -157,4 +157,4 @@ sudo systemctl start product-traceability
 ## 6. 待补项
 
 - `docs/SECURITY.md` 已编写；架构文档为根目录的 `SYSTEM_ARCHITECTURE.md`（不在 `docs/` 下）
-- `docs/OPERATIONS.md`、`RELEASE_CHECKLIST.md`（第四十目标的发布门禁清单）尚未建立
+- `docs/OPERATIONS.md`（运行期手册）与 `docs/RELEASE_CHECKLIST.md`（发布门禁清单）已建立

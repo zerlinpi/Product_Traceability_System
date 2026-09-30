@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 from traceability.audit_chain import verify_chain
-from traceability.db import connect_database
+from traceability.db import SCHEMA_VERSION, connect_database
 from traceability.login_guard import LoginPolicy, recent_failures, unlock
 from traceability.backup import (
     BackupError,
@@ -548,9 +548,49 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# Commands that read tables or columns a migration introduced. Run against a
+# database that predates them they die with `no such column: event_hash` or
+# `no such table: login_attempts`, which tells an operator nothing actionable.
+#
+# It is worth naming when that happens: the upgrade procedure (docs/UPGRADE.md)
+# tells you to inspect the database *before* upgrading, so a database older than
+# the code is the normal state during an upgrade, not an exotic one. The three
+# commands below refuse with both version numbers and a pointer instead of a
+# traceback. `preflight` and `postflight` already handle the version gap properly;
+# `backup`, `restore`, `integrity-check`, `db-info` and the login commands work on
+# either schema, so they are not listed.
+REQUIRES_CURRENT_SCHEMA = frozenset({"audit-verify", "audit-info", "login-status"})
+
+
+def refuse_on_stale_schema(arguments: argparse.Namespace) -> int | None:
+    """Exit status when the database predates the current schema, else None."""
+    database = Path(arguments.database)
+    if not database.exists():
+        return None  # the command itself reports a missing database, with its path
+
+    connection = open_read_only(database)
+    try:
+        found = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        connection.close()
+
+    if found == SCHEMA_VERSION:
+        return None
+
+    print(f"{FAIL} 数据库结构版本为 {found}，本命令需要 {SCHEMA_VERSION}。")
+    print("        这些命令读取迁移后才存在的表/列，在旧库上会以看不懂的报错失败。")
+    print("        先看升级步骤：docs/UPGRADE.md")
+    print("        升级前检查：  python manage.py preflight")
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
     try:
+        if arguments.command in REQUIRES_CURRENT_SCHEMA:
+            refusal = refuse_on_stale_schema(arguments)
+            if refusal is not None:
+                return refusal
         return int(arguments.handler(arguments))
     except BackupError as error:
         print(f"{FAIL} {error}")

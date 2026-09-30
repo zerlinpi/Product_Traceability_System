@@ -50,20 +50,28 @@ def read(relative: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+# Documents the project claims to maintain. A module constant rather than a
+# literal inside the check, so a test can assert that an entry was not silently
+# dropped — deleting a document from this list is otherwise invisible.
+REQUIRED_DOCUMENTS = (
+    "README.md",
+    "SYSTEM_ARCHITECTURE.md",
+    "docs/API_CONTRACT.md",
+    "docs/BACKUP_RESTORE.md",
+    "docs/DATA_MODEL.md",
+    "docs/OPERATIONS.md",
+    "docs/PERMISSION_MATRIX.md",
+    "docs/PRODUCT_RULES.md",
+    "docs/RELEASE_CHECKLIST.md",
+    "docs/SECURITY.md",
+    "docs/UPGRADE.md",
+    ".github/workflows/ci.yml",
+)
+
+
 def check_required_documents() -> None:
     """Every document the project claims to maintain must actually be there."""
-    for relative in (
-        "README.md",
-        "SYSTEM_ARCHITECTURE.md",
-        "docs/API_CONTRACT.md",
-        "docs/BACKUP_RESTORE.md",
-        "docs/DATA_MODEL.md",
-        "docs/PERMISSION_MATRIX.md",
-        "docs/PRODUCT_RULES.md",
-        "docs/SECURITY.md",
-        "docs/UPGRADE.md",
-        ".github/workflows/ci.yml",
-    ):
+    for relative in REQUIRED_DOCUMENTS:
         if not (ROOT / relative).is_file():
             fail(f"{relative}: 文档缺失")
 
