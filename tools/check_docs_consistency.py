@@ -21,6 +21,7 @@ the code and compared — never the other way round.
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -245,6 +246,70 @@ def check_frontend_entry() -> None:
                 )
 
 
+# A repo-relative path written as an inline code span, e.g. `static/app_v2.js`.
+_DOC_PATH_RE = re.compile(
+    r"`([A-Za-z0-9_][A-Za-z0-9_./-]*"
+    r"\.(?:md|py|ts|vue|js|json|bat|sh|conf|service|txt|yml|yaml|css|html|png|svg))`"
+)
+
+# Places where a reference to a file that no longer exists is the point rather
+# than a mistake:
+#
+#   .kiro/specs/    design records for completed work. A spec saying "modify
+#                   static/app_v2.js" was true when it was written; rewriting it
+#                   would falsify the record, which is worse than the confusion.
+#   docs/archive/   where superseded documents go, with a header saying so.
+#
+# Everything else is current documentation and is held to the current tree.
+_HISTORICAL_PREFIXES = (".kiro/", "docs/archive/")
+
+
+def check_deleted_file_references() -> None:
+    """Current docs must not point at files that were removed.
+
+    This is how `design-qa.md` sat at the repository root for months: a QA report
+    for the replaced vanilla-JS UI, whose every screenshot had been deleted with
+    that UI, still reading as current documentation and still citing
+    "Pytest suite: 28 passed" against a suite of over a thousand tests.
+
+    Only files git has a record of deleting are reported. A path that never
+    existed is not drift — `docs/UPGRADE.md` lists documents that are planned and
+    explicitly says 尚未建立, and flagging that would be flagging honest
+    bookkeeping. The distinction needs history, which is why the
+    docs-consistency CI job checks out with `fetch-depth: 0`.
+    """
+    listed = subprocess.run(
+        ["git", "ls-files", "*.md"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        fail("无法列出被跟踪的 markdown（需要在 git 工作区内运行）")
+        return
+
+    for relative in listed.stdout.split():
+        if relative.startswith(_HISTORICAL_PREFIXES):
+            continue
+        text = read(relative)
+        for match in sorted(set(_DOC_PATH_RE.findall(text))):
+            if (ROOT / match).exists():
+                continue
+            deleted = subprocess.run(
+                ["git", "log", "--all", "--diff-filter=D", "--format=%h", "-1", "--", match],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if deleted.stdout.strip():
+                fail(
+                    f"{relative}: 引用了已删除的 {match}"
+                    f"（在 {deleted.stdout.split()[0]} 中被删除）"
+                )
+
+
 def main() -> int:
     check_required_documents()
     check_schema_version()
@@ -252,6 +317,7 @@ def main() -> int:
     check_roles()
     check_python_versions()
     check_frontend_entry()
+    check_deleted_file_references()
 
     if failures:
         print("文档与代码不一致：\n")

@@ -209,6 +209,84 @@ def test_missing_document_is_caught(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# References to files that were deleted
+# --------------------------------------------------------------------------
+
+
+def test_reference_to_a_deleted_file_is_caught(monkeypatch):
+    """`static/app_v2.js` was removed with the vanilla-JS UI.
+
+    This is the shape `design-qa.md` had at the repository root: a document that
+    still read as current while every artefact it cited had been deleted.
+    """
+    _patch_read(monkeypatch, {"README.md": "参见 `static/app_v2.js`。"})
+
+    checker.check_deleted_file_references()
+
+    assert checker.failures, "指向已删除文件的引用未被发现"
+
+
+def test_a_path_that_never_existed_is_not_reported(monkeypatch):
+    """Documenting planned work is honest bookkeeping, not drift.
+
+    `docs/UPGRADE.md` lists documents that do not exist yet and says 尚未建立.
+    Flagging that would push the project toward deleting the note instead of
+    writing the document.
+    """
+    _patch_read(monkeypatch, {"README.md": "`docs/NEVER_EXISTED.md` 尚未建立。"})
+
+    checker.check_deleted_file_references()
+
+    assert not checker.failures, f"把待办当成了漂移: {checker.failures}"
+
+
+def test_historical_areas_are_exempt(monkeypatch):
+    """`.kiro/specs/` and `docs/archive/` are allowed to cite removed files.
+
+    A spec saying "modify static/app_v2.js" was true when it was written. Editing
+    it to match today would falsify the record, which is worse than the
+    confusion — so the exemption is by location, and the location is the signal
+    that a document is a record rather than a description.
+    """
+    _patch_read(
+        monkeypatch,
+        {
+            ".kiro/specs/example/design.md": "改写 `static/app_v2.js`。",
+            "docs/archive/old-report.md": "证据：`tests/ui-dashboard-mobile.png`。",
+        },
+    )
+
+    def only_historical_files(*_args, **_kwargs):
+        return type(
+            "Result",
+            (),
+            {
+                "returncode": 0,
+                "stdout": ".kiro/specs/example/design.md\ndocs/archive/old-report.md\n",
+            },
+        )()
+
+    monkeypatch.setattr(checker.subprocess, "run", only_historical_files)
+
+    checker.check_deleted_file_references()
+
+    assert not checker.failures, f"历史区域被误报: {checker.failures}"
+
+
+def test_the_exemption_prefixes_cover_the_areas_that_need_them():
+    """The prefixes are the mechanism; a typo would silently stop protecting."""
+    assert ".kiro/" in checker._HISTORICAL_PREFIXES
+    assert "docs/archive/" in checker._HISTORICAL_PREFIXES
+
+
+def test_current_docs_do_not_reference_deleted_files():
+    """The repository itself: no current document points at a removed file."""
+    checker.check_deleted_file_references()
+
+    assert not checker.failures, "当前文档引用了已删除的文件：\n  " + "\n  ".join(checker.failures)
+
+
+# --------------------------------------------------------------------------
 # The real repository — this is the part CI runs
 # --------------------------------------------------------------------------
 

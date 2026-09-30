@@ -56,7 +56,13 @@ jobs:
     name: Docs match the code
     runs-on: ubuntu-latest
     steps:
+      # Full history, not the default depth of 1. One of the checks asks git
+      # whether a path a document references was ever deleted; on a shallow clone
+      # that question always answers no, and the check would pass by being unable
+      # to see anything — a silent no-op, which is worse than no check.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"

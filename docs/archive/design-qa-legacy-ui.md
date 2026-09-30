@@ -1,4 +1,22 @@
-# Design QA Report
+# Design QA Report — 原生 JS 界面（已废弃）
+
+> **历史文档。** 这份报告记录的是**被替换掉的原生 JS 单页界面**，
+> 不是当前的 Vue 3 + TypeScript 前端。
+>
+> 它为什么留在这里而不是删除：里面记录的三个 P2 视觉问题及其修法
+> （移动端账号文案被裁切、抽屉截图拍在过渡动画中间、Tabler 图标替换数字标记）
+> 在重写界面时是**需求输入**，删掉就等于把当时的判断依据一起删掉。
+>
+> 但它已经**不能作为当前系统的验证证据**：
+> 全部截图都已随界面替换被删除；文中的路径属于旧工作副本与另一台机器；
+> 结尾「Pytest suite: 28 passed」对应的套件现在是 1000 多个测试。
+> 当前前端的验证证据是 `frontend/e2e/smoke.mjs`，由 CI 执行。
+>
+> 保留原报告正文，不作修改——改写历史记录会让它既不是历史也不是现状。
+
+---
+
+## 原报告正文
 
 - Source visual truth: `C:\Users\皮泽霖\.codex\generated_images\019f6ee3-8c5d-7e62-ab94-cd8782a382e4\exec-0f82b3e0-ed13-4a43-9ee4-4a1a77c71dce.png`
 - Primary implementation capture: `E:\pacefitApp\Product_Traceability_System\tests\ui-dashboard-viewport.png`
