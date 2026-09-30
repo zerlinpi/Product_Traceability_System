@@ -277,6 +277,13 @@ def check_deleted_file_references() -> None:
     explicitly says 尚未建立, and flagging that would be flagging honest
     bookkeeping. The distinction needs history, which is why the
     docs-consistency CI job checks out with `fetch-depth: 0`.
+
+    That dependence on history has a sharp edge worth knowing: a document edited
+    in the same commit that deletes the file it cites will pass locally and fail
+    on CI, because locally the deletion is not in history yet. It happened while
+    writing this check — the architecture doc explained the exemption using the
+    old filename in backticks, in the commit that archived the file away. Run the
+    check after committing, or accept that CI reports it first.
     """
     listed = subprocess.run(
         ["git", "ls-files", "*.md"],
