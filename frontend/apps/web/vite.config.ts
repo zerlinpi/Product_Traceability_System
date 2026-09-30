@@ -1,11 +1,49 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import dayjs from 'dayjs'
+import { execFileSync } from 'node:child_process'
 import { defineConfig, loadEnv } from 'vite'
 import { parseLoadedEnv } from 'vite-plugin-env-parse'
 import pkg from './package.json' with { type: 'json' }
 import createVitePlugins from './vite/plugins.ts'
+
+// The build stamps itself with a time, shown in 系统信息 in the UI. It used to
+// be `dayjs()`, i.e. now — which made every build produce a different bundle.
+// Two builds two seconds apart disagreed, and so did the same source built on
+// Windows and on Linux. The consequence was concrete: static/dist is committed
+// (production servers have no Node), so the committed bundle could never be
+// compared against a rebuild, and "somebody edited the front end and forgot to
+// rebuild" had no way of being detected.
+//
+// Derive it from something stable instead:
+//
+//   SOURCE_DATE_EPOCH  the reproducible-builds convention, honoured when set
+//   git commit time    otherwise — stable for a given revision
+//   epoch 0            when neither exists (a source tarball with no .git)
+//
+// UTC, so two machines in different timezones agree. The value still means
+// something: it is the revision the bundle was built from.
+function resolveBuildTime(): string {
+  const fromEnv = process.env.SOURCE_DATE_EPOCH
+  const fromGit = (() => {
+    try {
+      return execFileSync('git', ['log', '-1', '--format=%ct'], {
+        cwd: import.meta.dirname,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim()
+    }
+    catch {
+      return ''
+    }
+  })()
+
+  const seconds = [fromEnv, fromGit].find(value => value && /^\d+$/.test(value))
+  return new Date(Number(seconds ?? 0) * 1000)
+    .toISOString()
+    .slice(0, 19)
+    .replace('T', ' ')
+}
 
 // The Flask app serves everything under /static from the repository's static/
 // folder, and the SPA entry (index.html) from static/dist. The build therefore
@@ -54,7 +92,7 @@ export default defineConfig(({ mode, command }) => {
           dependencies: pkg.dependencies,
           devDependencies: pkg.devDependencies,
         },
-        lastBuildTime: dayjs().format('YYYY-MM-DD HH:mm:ss'),
+        lastBuildTime: resolveBuildTime(),
       }),
     },
     plugins: createVitePlugins(mode, command === 'build'),

@@ -467,17 +467,35 @@ CI 的 `frontend` 作业（仅 Ubuntu，浏览器行为与平台无关）因此�
 ```
 pnpm install --frozen-lockfile   # 严格按 lockfile，不允许改写
 pnpm typecheck                   # vue-tsc
-pnpm build
-python tools/check_frontend_build.py   # 与已提交的 bundle 比对
+python tools/check_frontend_build.py   # 指纹比对，必须在构建之前
+pnpm build                       # 证明源码确实能编译；产物丢弃
 pnpm e2e                         # 浏览器 smoke（PTS_BROWSER=chrome）
 ```
+
+**检查必须在构建之前**：`pnpm build` 的 `emptyOutDir` 会清空 `static/dist`，
+连同 `build-info.json` 一起删掉，之后就无法判断已提交的 bundle 来自哪一版源码。
 
 `--frozen-lockfile` 是刻意的：允许改写 lockfile 的安装会让 CI 在一套
 **没人提交过的依赖**上变绿，而漂移只会在下一次干净检出时暴露。
 
 **CI 不提交构建产物。** 会自动 push 生成物的流水线会让每次构建都可能产生冲突，
 且「什么都没改」的运行也会留下难以审查的 diff。流水线只负责拒绝漂移，
-重新构建并提交是开发者的一次有意识动作。
+重新构建并提交是开发者的一次有意识动作（`python tools/build_frontend.py`）。
+
+> **为什么比对指纹而不是产物字节**：这个构建**不是字节可复现的**，
+> 试过两次都没成：
+>
+> 1. `lastBuildTime` 曾是 `dayjs()`，即构建当下的挂钟时间，被烤进 bundle。
+>    同机相隔两秒的两次构建因此不同，Windows 与 Linux 更是不同（还差一个时区）。
+>    **已修**：改为 `SOURCE_DATE_EPOCH` 或 git 提交时间，UTC。修完 JS 输出即稳定。
+> 2. UnoCSS 输出主题自定义属性的**顺序不稳定**。同一份源码两次构建，
+>    `:root` 里会有两行 `--fontWeight-*` / `--colors-*` 互换位置——内容相同、字节不同。
+>    这在库内部，项目侧无法可靠固定。
+>
+> 所以比对的是「它构建自哪一版源码」：`build-info.json` 记录构建输入的指纹
+> （`frontend/` 下真正参与构建的文件，路径 + 规范化内容，行尾统一为 LF
+> 以免 Windows 检出即产生差异）。指纹确定、跨平台一致，
+> 且**直接针对真实风险**——源码改了而 bundle 没重建。
 
 E2E 用 `tools/dev_server.py` 起服务：它用临时库、自带种子账号、
 拒绝在 `PTS_ENV=production` 下运行，**从不触碰 `data/traceability.db`**。

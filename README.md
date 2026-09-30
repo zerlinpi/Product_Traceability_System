@@ -156,21 +156,29 @@ TABLE-A-20260718-0003
 `install.bat` 与 `install-linux.sh` 只准备 Python 环境，这是有意的。
 
 代价是：**改了 `frontend/` 就必须重新构建并提交 `static/dist`**。
-否则仓库里跑的仍是旧 bundle，而 Python 测试断言的是「当前 `static/dist` 的内容」，
-**不会发现这个漂移**。所以 CI 会重新构建并与已提交内容比对，
-不一致即失败（`tools/check_frontend_build.py`）：
+否则仓库里跑的仍是旧界面，而 Python 测试断言的是「当前 `static/dist` 的内容」，
+**不会发现这个漂移**。所以构建要用这个命令，而不是 `pnpm build`：
 
 ```bash
-cd frontend
-pnpm install --frozen-lockfile
-pnpm build
-cd ..
+python tools/build_frontend.py     # 构建 + 记录「构建自哪一版源码」的指纹
 git add static/dist
 ```
 
+`tools/check_frontend_build.py` 在 CI 中重新计算源码指纹并与 bundle 记录的比对，
+不一致即失败并打印上面的命令。**CI 不会替你提交生成物**——
+自动 push 生成文件会让每次构建都可能冲突。
+
+> **为什么比对的是指纹而不是产物字节**：这个构建**不是字节可复现的**。
+> 同一台机器相隔两秒的两次构建，产物就不同——UnoCSS 输出主题变量的顺序不稳定，
+> 两次构建的 `:root` 里会有两行变量互换位置（内容相同）。
+> 这是库内部行为，项目侧无法可靠固定。
+> （另一个原因——构建时间戳——已经修掉：`vite.config.ts` 不再用 `dayjs()` 取当前时间，
+> 改为 `SOURCE_DATE_EPOCH` 或 git 提交时间，UTC。）
+> 因此比对的是「它构建自哪一版源码」，而不是「它长什么样」。
+
 只有需要改前端时才需要 Node（版本见 `frontend/.node-version`，pnpm 版本见
-`frontend/package.json` 的 `packageManager`）。CI 会执行 typecheck、build、
-构建一致性检查，以及一轮浏览器 smoke E2E。
+`frontend/package.json` 的 `packageManager`）。CI 会执行 typecheck、构建、
+指纹比对，以及一轮浏览器 smoke E2E。
 
 ## Windows 服务器部署配置
 

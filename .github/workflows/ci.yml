@@ -104,22 +104,29 @@ jobs:
         working-directory: frontend
         run: pnpm typecheck
 
-      - name: Build
-        working-directory: frontend
-        run: pnpm build
-
-      # The bundle is committed because the factory server has no Node toolchain,
-      # which means a developer can edit frontend/, build locally, and commit only
-      # the source — leaving the repository serving a bundle without their change.
-      # Nothing else would notice: the Python tests assert against whatever
-      # static/dist happens to contain. So the rebuild above is compared against
-      # what git has, and the run fails if they differ. CI does not commit the
-      # result; the developer rebuilds and commits deliberately.
+      # Checked BEFORE the build, because the build wipes static/dist
+      # (emptyOutDir) and would take build-info.json with it. The bundle is
+      # committed because the factory server has no Node toolchain, which means a
+      # developer can edit frontend/, build locally, and commit only the source —
+      # leaving the repository serving a bundle without their change. Nothing else
+      # would notice: the Python tests assert against whatever static/dist holds.
+      #
+      # This compares a fingerprint of the build inputs, not the build output. The
+      # output is not byte-reproducible: UnoCSS emits its theme custom properties
+      # in a non-deterministic order, so two builds of identical sources differ by
+      # a couple of swapped lines inside :root. See tools/check_frontend_build.py.
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Committed bundle matches the source build
+      - name: Committed bundle was built from this source
         run: python tools/check_frontend_build.py
+
+      # Proves the source actually compiles. The result is discarded; CI never
+      # commits generated files, because a pipeline that pushes build output makes
+      # every run a possible conflict and every no-op run an unreviewable diff.
+      - name: Build
+        working-directory: frontend
+        run: pnpm build
 
       - name: Install the backend
         run: |
