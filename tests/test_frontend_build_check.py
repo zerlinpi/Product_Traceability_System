@@ -118,6 +118,49 @@ def test_fingerprint_ignores_path_order(fake_repo):
     assert checker.source_fingerprint() == second
 
 
+def test_source_order_is_case_sensitive_and_separator_free(fake_repo):
+    """The ordering must not depend on the platform.
+
+    This is not hypothetical: sorting the Path objects made the fingerprint differ
+    between a Windows checkout and CI, and the check went red on a tree that was
+    in fact consistent. ``PureWindowsPath`` compares case-insensitively, so
+    ``api/index.ts`` sorted before ``App.vue`` on Windows and after it on Linux;
+    and the absolute prefix carries the native separator, which orders differently
+    too. Both are avoided by sorting the relative POSIX form.
+    """
+    source = fake_repo / "frontend/apps/web/src"
+    (source / "api").mkdir()
+    (source / "api" / "index.ts").write_text("export {}\n", encoding="utf-8")
+    (source / "App.vue").write_text("<template />\n", encoding="utf-8")
+
+    order = [path.relative_to(fake_repo).as_posix() for path in checker._iter_sources()]
+    assert order.index("frontend/apps/web/src/App.vue") < order.index(
+        "frontend/apps/web/src/api/index.ts"
+    ), f"大写字母必须排在小写之前（区分大小写）: {order}"
+    assert order == sorted(order), "顺序必须是稳定的字典序"
+
+
+def test_source_order_does_not_depend_on_the_root_prefix(tmp_path, monkeypatch):
+    """The same tree under two different roots must fingerprint identically."""
+    def build(root: Path) -> None:
+        source = root / "frontend" / "apps" / "web" / "src"
+        source.mkdir(parents=True)
+        (source / "App.vue").write_text("<template />\n", encoding="utf-8")
+        (source / "api").mkdir()
+        (source / "api" / "index.ts").write_text("export {}\n", encoding="utf-8")
+
+    first = tmp_path / "a-short"
+    second = tmp_path / "b-much-longer-directory-name"
+    build(first)
+    build(second)
+
+    monkeypatch.setattr(checker, "SOURCE_ROOTS", ("frontend/apps/web/src",))
+    monkeypatch.setattr(checker, "ROOT", first)
+    first_hash = checker.source_fingerprint()
+    monkeypatch.setattr(checker, "ROOT", second)
+    assert checker.source_fingerprint() == first_hash
+
+
 # ---------------------------------------------------------------------------
 # The command's exit status, which is what CI reads
 # ---------------------------------------------------------------------------

@@ -94,7 +94,18 @@ def _iter_sources() -> list[Path]:
             for path in target.rglob("*"):
                 if path.is_file() and not any(part in SKIP_DIRS for part in path.parts):
                     files.append(path)
-    return sorted(files)
+    # Sorted by the relative POSIX path, not by the Path object. Two reasons, both
+    # of which made the fingerprint differ between a Windows checkout and CI:
+    #
+    #   Path.__lt__ compares the whole string, which carries the absolute prefix
+    #   and the native separator;
+    #   PureWindowsPath compares case-insensitively, so `api/index.ts` sorts
+    #   before `App.vue` on Windows and after it on Linux.
+    #
+    # Either one reorders the digest input and the same sources produce two
+    # fingerprints. Sorting the relative POSIX form is case-sensitive and
+    # separator-free on every platform.
+    return sorted(files, key=lambda path: path.relative_to(ROOT).as_posix())
 
 
 def source_fingerprint() -> str:
