@@ -192,7 +192,13 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python-version: ["3.13"]
     steps:
+      # Full history, for the same reason as the docs job: the suite includes
+      # test_docs_consistency.py, whose repository-level assertions call the
+      # checks directly. Under the default depth of 1 the deletion lookup always
+      # answers no, so those assertions would pass without verifying anything.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}

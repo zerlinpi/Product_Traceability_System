@@ -213,6 +213,27 @@ def test_missing_document_is_caught(monkeypatch):
 # --------------------------------------------------------------------------
 
 
+def _fake_git(monkeypatch, tracked: str, deletions: dict[str, str]) -> None:
+    """Answer `git ls-files` and `git log --diff-filter=D` without a real clone.
+
+    The check asks git whether a path was ever deleted, which makes it depend on
+    how deep the checkout is: under `--depth 1` the answer is always no. A test
+    that relied on the real repository's history would therefore pass on a full
+    clone and fail on a shallow one, and it would be asserting the environment
+    rather than the logic. Faking both calls keeps it deterministic and lets the
+    cases below state exactly which paths git claims to have deleted.
+    """
+
+    def run(args, **_kwargs):
+        if args[:2] == ["git", "ls-files"]:
+            return type("Result", (), {"returncode": 0, "stdout": tracked})()
+        path = args[-1]
+        found = deletions.get(path, "")
+        return type("Result", (), {"returncode": 0, "stdout": found})()
+
+    monkeypatch.setattr(checker.subprocess, "run", run)
+
+
 def test_reference_to_a_deleted_file_is_caught(monkeypatch):
     """`static/app_v2.js` was removed with the vanilla-JS UI.
 
@@ -220,10 +241,13 @@ def test_reference_to_a_deleted_file_is_caught(monkeypatch):
     still read as current while every artefact it cited had been deleted.
     """
     _patch_read(monkeypatch, {"README.md": "参见 `static/app_v2.js`。"})
+    _fake_git(monkeypatch, "README.md\n", {"static/app_v2.js": "a019e61\n"})
 
     checker.check_deleted_file_references()
 
     assert checker.failures, "指向已删除文件的引用未被发现"
+    assert "static/app_v2.js" in checker.failures[0]
+    assert "a019e61" in checker.failures[0], "应指出是哪个提交删的，否则无从排查"
 
 
 def test_a_path_that_never_existed_is_not_reported(monkeypatch):
@@ -234,10 +258,27 @@ def test_a_path_that_never_existed_is_not_reported(monkeypatch):
     writing the document.
     """
     _patch_read(monkeypatch, {"README.md": "`docs/NEVER_EXISTED.md` 尚未建立。"})
+    _fake_git(monkeypatch, "README.md\n", {})
 
     checker.check_deleted_file_references()
 
     assert not checker.failures, f"把待办当成了漂移: {checker.failures}"
+
+
+def test_the_check_is_a_noop_when_history_is_unavailable(monkeypatch):
+    """A shallow clone cannot answer the question, so it must not answer wrongly.
+
+    The test job checks out with `fetch-depth: 0` so this does not bite there,
+    but the failure mode is worth pinning: with no history the check reports
+    nothing rather than guessing, and CI's docs job is where the real answer
+    comes from. Silence is the honest outcome; inventing a verdict would not be.
+    """
+    _patch_read(monkeypatch, {"README.md": "参见 `static/app_v2.js`。"})
+    _fake_git(monkeypatch, "README.md\n", {})
+
+    checker.check_deleted_file_references()
+
+    assert not checker.failures, "没有历史时不应凭空报告"
 
 
 def test_historical_areas_are_exempt(monkeypatch):
@@ -255,18 +296,11 @@ def test_historical_areas_are_exempt(monkeypatch):
             "docs/archive/old-report.md": "证据：`tests/ui-dashboard-mobile.png`。",
         },
     )
-
-    def only_historical_files(*_args, **_kwargs):
-        return type(
-            "Result",
-            (),
-            {
-                "returncode": 0,
-                "stdout": ".kiro/specs/example/design.md\ndocs/archive/old-report.md\n",
-            },
-        )()
-
-    monkeypatch.setattr(checker.subprocess, "run", only_historical_files)
+    _fake_git(
+        monkeypatch,
+        ".kiro/specs/example/design.md\ndocs/archive/old-report.md\n",
+        {"static/app_v2.js": "a019e61\n", "tests/ui-dashboard-mobile.png": "a019e61\n"},
+    )
 
     checker.check_deleted_file_references()
 
