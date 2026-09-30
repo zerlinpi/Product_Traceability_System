@@ -184,6 +184,64 @@ def test_install_bat_checking_an_untested_python_is_caught(monkeypatch):
     assert checker.failures, "install.bat 接受未测试的 Python 版本未被发现"
 
 
+def test_every_version_assertion_is_checked_not_just_the_first(monkeypatch):
+    """install.bat has two, and the second one was wrong for months.
+
+    The check used a single re.search, which stops at the first match. The first
+    assertion guards the base interpreter and said 3.13; the second decides
+    whether an existing .venv is healthy and still said 3.11. So a venv built on
+    3.11 was accepted and never rebuilt — the drift this gate exists to prevent,
+    invisible to the gate itself.
+
+    The test above could not have found it: it replaces the first occurrence.
+    This one replaces the second.
+    """
+    install = (ROOT / "install.bat").read_text(encoding="utf-8")
+    first = install.find("sys.version_info >= (3, 13)")
+    second = install.find("sys.version_info >= (3, 13)", first + 1)
+    assert second != -1, "测试前提失效：install.bat 应有两处版本断言"
+
+    stale = install[:second] + "sys.version_info >= (3, 11)" + install[second + len("sys.version_info >= (3, 13)"):]
+    _patch_read(monkeypatch, {"install.bat": stale})
+
+    checker.check_python_versions()
+
+    assert checker.failures, "第二处（venv 健康检查）接受未测试的版本未被发现"
+
+
+def test_install_linux_checking_an_untested_python_is_caught(monkeypatch):
+    """The Linux installer was not covered at all, and had no check to cover.
+
+    Only install.bat was validated, so install-linux.sh could build a venv from
+    whatever python3 happened to be on PATH — 3.9 on an older Debian — and the
+    failure would surface later as an error that never mentions Python.
+    """
+    script = (ROOT / "install-linux.sh").read_text(encoding="utf-8")
+    stale = script.replace("sys.version_info >= (3, 13)", "sys.version_info >= (3, 11)")
+    assert stale != script, "测试前提失效：install-linux.sh 的版本检查已改变"
+    _patch_read(monkeypatch, {"install-linux.sh": stale})
+
+    checker.check_python_versions()
+
+    assert checker.failures, "install-linux.sh 接受未测试的 Python 版本未被发现"
+
+
+def test_an_installer_without_any_version_check_is_caught(monkeypatch):
+    """No assertion at all is worse than a wrong one, and must not pass silently."""
+    _patch_read(monkeypatch, {"install-linux.sh": "#!/usr/bin/env bash\npython3 -m venv .venv\n"})
+
+    checker.check_python_versions()
+
+    assert checker.failures, "缺少版本检查未被发现"
+
+
+def test_both_installers_are_covered_by_the_version_check():
+    """Pinned: dropping one from the loop would silently stop validating it."""
+    for installer in ("install.bat", "install-linux.sh"):
+        source = (ROOT / installer).read_text(encoding="utf-8")
+        assert checker._VERSION_ASSERTION_RE.findall(source), f"{installer} 没有版本断言"
+
+
 # --------------------------------------------------------------------------
 # Frontend entry point
 # --------------------------------------------------------------------------

@@ -35,7 +35,7 @@ for /f "delims=" %%V in ('"%BASE_PYTHON%" --version 2^>^&1') do echo [Python] %%
 
 set "VENV_HEALTHY="
 if exist ".venv\Scripts\python.exe" (
-  ".venv\Scripts\python.exe" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul
+  ".venv\Scripts\python.exe" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 13) else 1)" >nul 2>nul
   if not errorlevel 1 set "VENV_HEALTHY=1"
 )
 

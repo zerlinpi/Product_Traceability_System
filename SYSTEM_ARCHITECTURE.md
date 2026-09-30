@@ -443,9 +443,19 @@ Python 的 `from X import y` 把名字**绑定到当前模块的命名空间**�
 它把绿灯变成一个没人验证过的承诺。
 
 校验项：数据库版本、路由总数、蓝图是否都被扫描、角色集合、
-Python 支持版本（`pyproject` ↔ CI ↔ README ↔ `install.bat` 四方一致）、
+Python 支持版本（`pyproject` ↔ CI ↔ README ↔ **两个安装脚本** 一致）、
 正式前端入口、关键文档是否存在（含 `docs/OPERATIONS.md` 与
 `docs/RELEASE_CHECKLIST.md`）、**当前文档是否引用了已被删除的文件**。
+
+> **Python 版本这一项曾漏掉一半**：原先只检查 `install.bat`，
+> 而且用的是 `re.search`，**只看第一处版本断言**。
+> `install.bat` 里有两处——一处管基础解释器（3.13），
+> 一处判断已有 `.venv` 是否健康（**仍写着 3.11，来自首次提交**）。
+> 于是用 3.11 建的 venv 会被判为「健康」而永不重建。
+> `install-linux.sh` 则**完全没有版本检查**，用裸 `python3`——
+> 在 Debian 11 这类机器上会用 3.9 建出 venv，报错在很久之后才出现，且不会提到 Python。
+>
+> 现在两处断言**全部**检查，两个安装脚本**都在覆盖范围内**。
 
 > **最后一项的由来**：仓库根目录曾长期放着一份 `docs/archive/design-qa-legacy-ui.md`
 > 的前身——一份**被替换掉的原生 JS 界面**的视觉验收报告。界面替换后它引用的每一张截图

@@ -161,10 +161,10 @@ def check_roles() -> None:
 
 
 def check_python_versions() -> None:
-    """One version list, agreed on by pyproject, CI, README and install.bat.
+    """One version list, agreed on by pyproject, CI, README and both installers.
 
     Advertising a version CI never runs is the drift that motivated this file,
-    so all four sources have to agree rather than merely coexist.
+    so every source has to agree rather than merely coexist.
     """
     config = tomllib.loads(read("pyproject.toml"))
     declared = config.get("tool", {}).get("pts", {}).get("supported-python")
@@ -202,17 +202,34 @@ def check_python_versions() -> None:
             f"声明支持的是 {sorted(declared_set)}"
         )
 
-    install = read("install.bat")
-    match = re.search(r"sys\.version_info >= \((\d+),\s*(\d+)\)", install)
-    if not match:
-        fail("install.bat: 找不到 Python 版本检查")
-    else:
-        wanted = f"{match.group(1)}.{match.group(2)}"
-        if wanted not in declared_set:
-            fail(
-                f"install.bat: 检查 Python >= {wanted}，"
-                f"声明支持的是 {sorted(declared_set)}"
-            )
+    # Every version assertion in every installer, not just the first one.
+    #
+    # This used to be a single re.search over install.bat, which stopped at the
+    # first `sys.version_info >= (...)` it found. install.bat has two — one for
+    # the base interpreter, one deciding whether an existing .venv is healthy —
+    # and the second still said 3.11 long after the project narrowed to 3.13.
+    # The gate could not see it, so a venv built on 3.11 was accepted as healthy
+    # and never rebuilt: exactly the "advertise a version CI never runs" drift
+    # this file exists to prevent.
+    #
+    # install-linux.sh had no check at all, which is why it is listed here too.
+    for installer in ("install.bat", "install-linux.sh"):
+        source = read(installer)
+        found = _VERSION_ASSERTION_RE.findall(source)
+        if not found:
+            fail(f"{installer}: 找不到 Python 版本检查")
+            continue
+        for major, minor in found:
+            wanted = f"{major}.{minor}"
+            if wanted not in declared_set:
+                fail(
+                    f"{installer}: 检查 Python >= {wanted}，"
+                    f"声明支持的是 {sorted(declared_set)}"
+                )
+
+
+#: `sys.version_info >= (3, 13)` in either a batch file or a shell script.
+_VERSION_ASSERTION_RE = re.compile(r"sys\.version_info >= \((\d+),\s*(\d+)\)")
 
 
 #: How GET / may hand out the page: the built SPA entry file, or (historically)
