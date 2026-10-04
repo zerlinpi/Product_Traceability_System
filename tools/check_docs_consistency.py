@@ -342,6 +342,84 @@ def check_deleted_file_references() -> None:
                 )
 
 
+#: Packages that exist to run the tests or lint the code. They belong in
+#: requirements-dev.txt and must not appear in the runtime set, because
+#: install.bat and install-linux.sh install that set on machines that only run
+#: the service.
+#:
+#: This includes transitives, because the runtime set must not pull them in
+#: either — coverage arrives with pytest-cov, and iniconfig, pluggy,
+#: sortedcontainers and Pygments arrive with pytest and hypothesis.
+DEV_ONLY_PACKAGES = frozenset(
+    {
+        "pytest",
+        "pytest-cov",
+        "hypothesis",
+        "coverage",
+        "ruff",
+        "iniconfig",
+        "pluggy",
+        "pygments",
+        "sortedcontainers",
+    }
+)
+
+#: The subset a developer has to ask for by name. The rest are transitive and
+#: listing them explicitly would pin them for no reason.
+DEV_DIRECT_PACKAGES = frozenset({"pytest", "hypothesis", "pytest-cov", "ruff"})
+
+
+def _requirement_names(text: str) -> set[str]:
+    """Package names in a requirements file, ignoring comments and options."""
+    names = set()
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):
+            continue
+        name = re.split(r"[=<>!\[;]", line, maxsplit=1)[0].strip()
+        if name:
+            names.add(name.lower())
+    return names
+
+
+def check_runtime_requirements_exclude_test_tooling() -> None:
+    """The runtime set must not carry test tooling, and the dev set must.
+
+    This drifted once and the cost landed on the wrong machine. requirements.txt
+    listed pytest and hypothesis with the note "so the suite runs on a fresh
+    checkout without extra steps", and requirements.lock.txt — the freeze meant
+    for air-gapped installs — had been generated from an environment with the
+    development requirements present. Eight of its twenty-five entries were test
+    tooling, so a factory server was being handed pytest, hypothesis, coverage,
+    pluggy, iniconfig, Pygments and sortedcontainers, none of which anything
+    imports at runtime.
+
+    Both directions are checked. A package in the runtime set is bloat on a
+    production machine; a test package missing from the development set means a
+    fresh clone cannot run the suite, which is the reason the split exists.
+    """
+    runtime = _requirement_names(read("requirements.txt"))
+    development = _requirement_names(read("requirements-dev.txt"))
+
+    leaked = sorted(runtime & DEV_ONLY_PACKAGES)
+    if leaked:
+        fail(
+            f"requirements.txt: 混入了测试/开发依赖 {leaked}——"
+            "install.bat / install-linux.sh 会把它装到只跑服务的机器上；"
+            "请移到 requirements-dev.txt"
+        )
+
+    missing = sorted(DEV_DIRECT_PACKAGES - development)
+    if missing:
+        fail(
+            f"requirements-dev.txt: 缺少测试/开发依赖 {missing}——"
+            "新检出的仓库将无法运行测试或 lint"
+        )
+
+    if "-r requirements.txt" not in read("requirements-dev.txt"):
+        fail("requirements-dev.txt: 必须包含 -r requirements.txt，否则它不是超集")
+
+
 def main() -> int:
     check_required_documents()
     check_schema_version()
@@ -350,6 +428,7 @@ def main() -> int:
     check_python_versions()
     check_frontend_entry()
     check_deleted_file_references()
+    check_runtime_requirements_exclude_test_tooling()
 
     if failures:
         print("文档与代码不一致：\n")

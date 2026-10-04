@@ -445,7 +445,8 @@ Python 的 `from X import y` 把名字**绑定到当前模块的命名空间**�
 校验项：数据库版本、路由总数、蓝图是否都被扫描、角色集合、
 Python 支持版本（`pyproject` ↔ CI ↔ README ↔ **两个安装脚本** 一致）、
 正式前端入口、关键文档是否存在（含 `docs/OPERATIONS.md` 与
-`docs/RELEASE_CHECKLIST.md`）、**当前文档是否引用了已被删除的文件**。
+`docs/RELEASE_CHECKLIST.md`）、**当前文档是否引用了已被删除的文件**、
+**运行期依赖是否混入了测试工具**。
 
 > **Python 版本这一项曾漏掉一半**：原先只检查 `install.bat`，
 > 而且用的是 `re.search`，**只看第一处版本断言**。

@@ -406,15 +406,32 @@ with ThreadPoolExecutor(max_workers=4) as ex:
 ### 开发环境与 CI
 
 ```bash
-python -m pip install -r requirements.txt -r requirements-dev.txt
+python -m pip install -r requirements-dev.txt   # 已包含 requirements.txt
 python -m pytest tests -q                       # 全量测试
 python -m ruff check .                          # 静态检查
 python tools/extract_routes.py --check          # 权限文档是否与代码同步
 python tools/check_test_count.py                # 测试数量是否被削减
 ```
 
-依赖**精确锁定**（`==`）。`requirements.lock.txt` 是完整冻结，用于完全复现的安装；
-CI 故意使用 `requirements.txt`，这样上游破坏性发布会以红灯暴露而不是被静默掩盖。
+**依赖分两份**：
+
+| 文件 | 内容 | 谁装 |
+| --- | --- | --- |
+| `requirements.txt` | **只有运行期依赖** | `install.bat` / `install-linux.sh`，即只跑服务的机器 |
+| `requirements-dev.txt` | 运行期 + 测试工具（pytest、hypothesis、pytest-cov）+ ruff | 开发机与 CI |
+
+`requirements-dev.txt` 通过 `-r requirements.txt` 包含前者，所以它是**超集**——
+开发时只需一条命令，**不要再额外加 `-r requirements.txt`**。
+
+依赖**精确锁定**（`==`）。`requirements.lock.txt` 是**运行期**的完整冻结，
+用于完全复现的安装（含气隙环境）；CI 故意使用 `requirements.txt`，
+这样上游破坏性发布会以红灯暴露而不是被静默掩盖。
+
+> 测试工具曾一度留在 `requirements.txt` 里（注释写着「让新检出无需额外步骤就能跑测试」），
+> 结果 `install.bat` / `install-linux.sh` 把 pytest、hypothesis、coverage、pluggy、
+> iniconfig、Pygments、sortedcontainers 一起装到了工厂服务器上——**那里没有任何东西 import 它们**。
+> 当时的锁文件是在装过开发依赖的环境里生成的，25 个条目里有 8 个是测试工具。
+> `tools/check_docs_consistency.py` 现在会双向校验这个划分。
 
 CI（`.github/workflows/ci.yml`）在 push 与 PR 上运行四个门禁：
 

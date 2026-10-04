@@ -401,6 +401,86 @@ def test_current_docs_do_not_reference_deleted_files():
 
 
 # --------------------------------------------------------------------------
+# Runtime vs development dependencies
+# --------------------------------------------------------------------------
+
+
+def test_test_tooling_in_the_runtime_set_is_caught(monkeypatch):
+    """It was there, and the cost landed on a factory server.
+
+    requirements.txt listed pytest and hypothesis with the note "so the suite
+    runs on a fresh checkout without extra steps" — but install.bat and
+    install-linux.sh install that same file on machines that only run the
+    service, and nothing there imports either package.
+    """
+    _patch_read(
+        monkeypatch,
+        {"requirements.txt": "Flask==3.1.3\npytest==9.1.1\nhypothesis==6.161.1\n"},
+    )
+
+    checker.check_runtime_requirements_exclude_test_tooling()
+
+    assert checker.failures, "运行时依赖混入测试工具未被发现"
+    assert "pytest" in checker.failures[0]
+
+
+def test_transitive_test_tooling_is_caught_too(monkeypatch):
+    """coverage, pluggy and friends arrive with pytest — they are just as unwanted."""
+    _patch_read(monkeypatch, {"requirements.txt": "Flask==3.1.3\ncoverage==7.16.1\n"})
+
+    checker.check_runtime_requirements_exclude_test_tooling()
+
+    assert checker.failures, "传递引入的测试工具未被发现"
+
+
+def test_a_runtime_package_missing_from_the_dev_set_is_caught(monkeypatch):
+    """The dev set must stay a superset, or a fresh clone cannot run the suite."""
+    _patch_read(monkeypatch, {"requirements-dev.txt": "-r requirements.txt\nruff==0.16.8\n"})
+
+    checker.check_runtime_requirements_exclude_test_tooling()
+
+    assert checker.failures, "开发依赖缺少 pytest/hypothesis 未被发现"
+
+
+def test_a_dev_set_that_is_not_a_superset_is_caught(monkeypatch):
+    _patch_read(
+        monkeypatch,
+        {"requirements-dev.txt": "pytest==9.1.1\nhypothesis==6.161.1\npytest-cov==7.1.0\nruff==0.16.8\n"},
+    )
+
+    checker.check_runtime_requirements_exclude_test_tooling()
+
+    assert checker.failures, "开发依赖未包含 -r requirements.txt 未被发现"
+
+
+def test_requirement_names_ignores_comments_options_and_pins():
+    """Parsing is load-bearing: a missed line means a missed leak."""
+    text = (
+        "# a comment\n"
+        "-r requirements.txt\n"
+        "\n"
+        "Flask==3.1.3  # trailing comment\n"
+        "qrcode>=8.0\n"
+        "bleak[extras]==1.1.1\n"
+        "waitress; python_version >= '3.13'\n"
+    )
+
+    assert checker._requirement_names(text) == {
+        "flask",
+        "qrcode",
+        "bleak",
+        "waitress",
+    }
+
+
+def test_the_real_requirement_files_are_split_correctly():
+    """The repository itself: runtime clean, development a superset."""
+    checker.check_runtime_requirements_exclude_test_tooling()
+
+    assert not checker.failures, "依赖划分不正确：\n  " + "\n  ".join(checker.failures)
+
+
+# --------------------------------------------------------------------------
 # The real repository — this is the part CI runs
 # --------------------------------------------------------------------------
 

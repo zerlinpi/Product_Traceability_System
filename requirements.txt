@@ -1,4 +1,4 @@
-# Runtime + test dependencies, pinned exactly.
+# Runtime dependencies only, pinned exactly.
 #
 # Pinned with == rather than ranges so that "works on my machine" means
 # something: a range lets a new minor release change behaviour between two
@@ -7,14 +7,20 @@
 # carries the full freeze for exact reproduction.
 #
 # Python 3.13 is the supported version (see README).
+#
+# Test tooling (pytest, hypothesis) and the linter live in
+# requirements-dev.txt, which includes this file. This list is what
+# install.bat / install-linux.sh install on a machine that only runs the
+# application, and it used to carry the test packages too: that put pytest,
+# hypothesis, coverage, pluggy, iniconfig, Pygments and sortedcontainers on a
+# factory server, where nothing imports them. Eight of the twenty-five packages
+# in the production freeze were test tooling.
+#
+# Developers: `pip install -r requirements-dev.txt` instead — it is a superset,
+# so it is one command either way.
 Flask==3.1.3
 qrcode==8.2
 bleak==1.1.1
 waitress==3.0.2
 pycryptodome==3.23.0
 openpyxl==3.1.5
-
-# Test tooling. Installed by install.bat / install-linux.sh so the suite runs on
-# a fresh checkout without extra steps.
-pytest==9.1.1
-hypothesis==6.161.1
