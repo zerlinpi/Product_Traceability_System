@@ -160,13 +160,33 @@ TABLE-A-20260718-0003
 **不会发现这个漂移**。所以构建要用这个命令，而不是 `pnpm build`：
 
 ```bash
-python tools/build_frontend.py     # 构建 + 记录「构建自哪一版源码」的指纹
+python tools/build_frontend.py     # 构建 + 记录指纹 + 生成 .gz 压缩副本
 git add static/dist
 ```
 
 `tools/check_frontend_build.py` 在 CI 中重新计算源码指纹并与 bundle 记录的比对，
 不一致即失败并打印上面的命令。**CI 不会替你提交生成物**——
 自动 push 生成文件会让每次构建都可能冲突。
+
+### 产物以 gzip 发送
+
+前端产物约 **2.4 MB**（JS + CSS），由应用自己发送——Windows 部署是 Waitress
+直连、没有反向代理，**没有别的东西能压缩它**。gzip 后约 **0.72 MB**，
+每次部署后每个工位终端首屏少传约 1.7 MB。
+
+压缩在**构建期**完成，不在请求期：
+
+- `tools/build_frontend.py` 为每个可压缩资源生成 `.gz` 副本（**随 `static/dist` 一起入库**）
+- `traceability/responses.py` 在客户端接受 gzip 时直接发送该副本
+
+服务端只挑文件，不做压缩，因此**没有逐请求的 CPU 开销**，且所有客户端收到同一份字节。
+作用范围**仅限 `/static/dist/assets/`**：这些文件名带内容哈希、缓存一年且不重新验证，
+所以 Werkzeug 基于**未压缩文件**算出的 ETag 永远不会被比对；
+超出这个范围就需要让 ETag 区分变体，而其余文件小到不值得。
+
+> `.gz` 与源文件的新鲜度会被检查：**过期的压缩副本不会被发送**。
+> 否则浏览器收到的是上一次构建的字节，而 `Content-Encoding: gzip` 是合法的——
+> 它会解压成乱码而不是报错，无从察觉。
 
 > **为什么比对的是指纹而不是产物字节**：这个构建**不是字节可复现的**。
 > 同一台机器相隔两秒的两次构建，产物就不同——UnoCSS 输出主题变量的顺序不稳定，

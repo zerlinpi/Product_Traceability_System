@@ -50,6 +50,7 @@ from traceability.auth import initialize_auth
 from traceability.errors import ApiError
 from traceability.login_guard import LoginPolicy
 from traceability.responses import (
+    compress_response,
     failure,
     frontend_entry_response,
     secure_response,
@@ -166,6 +167,10 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     initialize_auth(app)
 
     app.after_request(secure_response)
+    # Registered after secure_response so the security headers are already set
+    # when the body is swapped; compress_response only touches Content-Encoding,
+    # Content-Length and Vary.
+    app.after_request(compress_response)
 
     @app.errorhandler(ApiError)
     def handle_api_error(error: ApiError):

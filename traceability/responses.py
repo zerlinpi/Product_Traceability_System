@@ -47,6 +47,75 @@ FRONTEND_NOT_BUILT_MESSAGE = (
     "或使用随程序发布的 static/dist 目录。"
 )
 
+#: Suffixes worth compressing, and the ones tools/build_frontend.py generates
+#: ``.gz`` siblings for. Kept here so the build and the server cannot disagree
+#: about which files have a compressed copy — a file the server looks for and the
+#: build never wrote is a silent miss, not an error.
+COMPRESSIBLE_SUFFIXES = frozenset({".js", ".mjs", ".css", ".html", ".svg", ".json"})
+
+
+def precompressed_path(asset: Path) -> Path | None:
+    """The ``.gz`` sibling of ``asset``, when it exists and is not stale.
+
+    The freshness check matters because the bundle is committed: a build that
+    regenerates the assets but not their compressed copies would otherwise serve
+    the previous build's bytes under ``Content-Encoding: gzip``, which the browser
+    cannot detect — it would decode to garbage rather than fail.
+    """
+    if asset.suffix.lower() not in COMPRESSIBLE_SUFFIXES:
+        return None
+    compressed = asset.with_name(asset.name + ".gz")
+    if not compressed.is_file():
+        return None
+    if compressed.stat().st_mtime < asset.stat().st_mtime:
+        return None
+    return compressed
+
+
+def compress_response(response: Response) -> Response:
+    """Serve the pre-compressed copy of a hashed asset when the client accepts it.
+
+    The bundle is about 2.4 MB of JavaScript and CSS and is sent by the
+    application itself — on Windows the deployment is Waitress with no reverse
+    proxy in front, so there is nothing else that could compress it. gzip takes
+    it to about 0.7 MB, which is the difference between a workstation picking up
+    a new deployment in a moment and waiting on it.
+
+    Compression happens at build time, not here: this only picks a file. That
+    keeps per-request CPU out of the serving path and means the same bytes are
+    sent to every client.
+
+    Scoped to ``/static/dist/assets/`` deliberately. Those names are
+    content-hashed and cached immutably for a year, so no client ever revalidates
+    them and the ETag — which Werkzeug computed from the uncompressed file — is
+    never compared. Outside that prefix the ETag would have to be made
+    variant-aware, and the remaining files are small enough not to be worth it.
+    """
+    if response.status_code != 200:
+        return response
+    if not request.path.startswith(HASHED_ASSET_PREFIX):
+        return response
+    if "gzip" not in request.accept_encodings:
+        return response
+    if response.headers.get("Content-Encoding"):
+        return response
+
+    relative = request.path[len("/static/"):]
+    asset = (Path(current_app.root_path) / "static" / relative).resolve()
+    compressed = precompressed_path(asset)
+    if compressed is None:
+        return response
+
+    body = compressed.read_bytes()
+    response.direct_passthrough = False
+    response.set_data(body)
+    response.headers["Content-Encoding"] = "gzip"
+    response.headers["Content-Length"] = str(len(body))
+    # Without this a shared cache could hand the compressed body to a client that
+    # did not ask for it.
+    response.headers.add("Vary", "Accept-Encoding")
+    return response
+
 
 def success(data: Any = None, status: int = 200):
     """The success envelope: ``{"ok": true, "data": ...}``."""
