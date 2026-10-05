@@ -23,3 +23,19 @@
 *.ico binary
 *.woff binary
 *.woff2 binary
+*.gz binary
+
+# The built front end is byte-exact output, not source.
+#
+# Its compressed copies are committed beside it (tools/build_frontend.py writes
+# them, traceability/responses.py serves them), and they are generated from the
+# bytes the build produced. Normalising line endings on checkout rewrites the .js
+# and .css but not the .gz, because git treats the .gz as binary — so a clone
+# with core.autocrlf=true ends up with a .js on disk that is not what the .gz
+# contains, and the server sends the committed bytes while the file next to it
+# says something else.
+#
+# That is not hypothetical: it failed CI on the Windows runner while passing on
+# Linux, where no conversion happens. tests/test_static_compression.py decompresses
+# what the server sent and compares it to the file, which is what caught it.
+static/dist/** -text
