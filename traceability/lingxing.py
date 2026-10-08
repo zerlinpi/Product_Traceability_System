@@ -44,7 +44,14 @@ DEFAULT_INVENTORY_RECEIVE_PATH = (
 
 
 class LingxingError(Exception):
-    """Stable application-facing error raised by the Lingxing adapter."""
+    """Stable application-facing error raised by the Lingxing adapter.
+
+    ``uncertain`` marks the outcome as *unknown* rather than failed: the request
+    was sent and no reply came back, so the remote may or may not have applied
+    it. A caller that writes must not treat this as a plain failure and invite a
+    retry — doing so can create the record twice. ``retryable`` stays False for
+    these, because a retry is only safe once someone has checked the far side.
+    """
 
     def __init__(
         self,
@@ -53,10 +60,12 @@ class LingxingError(Exception):
         retryable: bool = False,
         status: int = 502,
         code: str | None = None,
+        uncertain: bool = False,
     ):
         super().__init__(message)
         self.message = message
         self.retryable = retryable
+        self.uncertain = uncertain
         self.status = status
         # The upstream Lingxing business code (e.g. "2001008") when the error
         # originates from a decoded API envelope; used to detect expired tokens.
@@ -290,7 +299,27 @@ class UrllibLingxingHttpClient:
             ) from error
         except EndpointPolicyError as error:
             raise LingxingError(str(error), status=503, retryable=False) from error
-        except (urllib.error.URLError, TimeoutError) as error:
+        except TimeoutError as error:
+            # The request went out and no reply came back. The far side may have
+            # applied it, so this is *unknown*, not failed. Retrying a write here
+            # is how one purchase order becomes two, so it is deliberately not
+            # marked retryable — someone has to look before it is sent again.
+            raise LingxingError(
+                f"领星请求超时，远端是否已写入未知：{error}",
+                retryable=False,
+                uncertain=True,
+                status=504,
+            ) from error
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, TimeoutError):
+                raise LingxingError(
+                    f"领星请求超时，远端是否已写入未知：{error.reason}",
+                    retryable=False,
+                    uncertain=True,
+                    status=504,
+                ) from error
+            # Connection refused, DNS failure, TLS handshake: the request never
+            # reached the far side, so nothing was written and a retry is safe.
             raise LingxingError(f"领星网络请求失败：{error}", retryable=True) from error
 
 
@@ -446,11 +475,22 @@ class LingxingIntegrationService:
                 return self._validated_response(response)
             except LingxingError as error:
                 last_error = error
-                if not error.retryable or attempt >= max_retries:
+                # A timeout on a write leaves the outcome unknown, and retrying it
+                # is how one record becomes two. Minting a token is idempotent, so
+                # that path may still retry an unknown outcome.
+                may_retry = error.retryable or (token_request and error.uncertain)
+                if not may_retry or attempt >= max_retries:
                     raise
             except (ConnectionError, TimeoutError, OSError) as error:
-                last_error = LingxingError(str(error), retryable=True)
-                if attempt >= max_retries:
+                # Raised by the transport rather than wrapped by it — a test fake,
+                # or a socket error between the layers. Same rule: an unknown
+                # outcome is retried only when the request is idempotent.
+                last_error = (
+                    LingxingError(str(error), retryable=True)
+                    if token_request
+                    else LingxingError(str(error), uncertain=True)
+                )
+                if not last_error.retryable or attempt >= max_retries:
                     raise last_error from error
             self.sleeper(interval)
         raise last_error or LingxingError("领星请求失败")

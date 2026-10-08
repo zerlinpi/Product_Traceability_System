@@ -484,6 +484,18 @@ def push_purchase_order_record(
     except Exception as error:
         database.rollback()
         message = error.message if isinstance(error, LingxingError) else str(error)
+        # A timeout is not a failure: the request went out and no reply came back,
+        # so Lingxing may have created the order. Recording it as a plain failure
+        # invites the operator to send it again and end up with two. The column's
+        # CHECK constraint allows only PENDING/PUSHED/FAILED, so the status stays
+        # FAILED and the distinction is carried by the audit event and by a
+        # message that says what to do about it.
+        uncertain = isinstance(error, LingxingError) and error.uncertain
+        if uncertain:
+            message = (
+                f"{message}｜结果未知：请求已发出但未收到回复，领星可能已经写入。"
+                "请先在领星按单号核对，确认不存在后再重试。"
+            )
         timestamp = current_app.config["NOW_PROVIDER"]()
         database.execute("BEGIN IMMEDIATE")
         database.execute(
@@ -496,11 +508,11 @@ def push_purchase_order_record(
         )
         record_audit_event(
             database,
-            "PO_PUSH_FAILED",
+            "PO_PUSH_UNKNOWN" if uncertain else "PO_PUSH_FAILED",
             "PURCHASE_ORDER",
             row["po_no"],
             reason=message,
-            payload={"result": "FAILED", "error": message},
+            payload={"result": "UNKNOWN" if uncertain else "FAILED", "error": message},
             occurred_at=timestamp,
         )
         database.commit()
