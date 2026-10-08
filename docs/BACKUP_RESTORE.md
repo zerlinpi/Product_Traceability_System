@@ -57,11 +57,16 @@ python manage.py verify-backup exports/backups/traceability_XXXXXXXXTXXXXXX.db
 
 ```
 校验：exports/backups/traceability_20260722T103000_0800.db
-    结构版本  21
+    结构版本  22
     自检      ok
     SHA-256   3da4b315...
+    产品图片  128 个文件（归档已校验）
 [OK] 备份可用
 ```
+
+> **`产品图片` 那一行必须确认。** 显示「该备份不含图片归档」时，
+> 要么这是升级前生成的旧格式备份，要么这台机器从未上传过图片。
+> 若产品资料里确实有图，却看到这一行，**说明备份不完整**，不要用它恢复。
 
 若显示 `[失败] 备份不可用`，**停止演练**，按第 6 节排查。这一份备份不能用。
 
@@ -91,16 +96,36 @@ python manage.py restore exports/backups/traceability_20260722T103000_0800.db --
     来源          exports/backups/traceability_20260722T103000_0800.db
     当前数据库    data/traceability.db
     恢复前副本    exports/backups/traceability_pre-restore_20260722T110000.db
-    结构版本      21
+    结构版本      22
+    产品图片      128 个文件已恢复
+    恢复前图片    data/product-images.pre-restore
 ```
 
 **注意 `恢复前副本` 这一行**：恢复前的数据库已自动另存。恢复错了可以从它回滚。
+
+**`产品图片` 那一行**有三种形态，对应三种不同处境：
+
+| 显示 | 含义 | 要做的事 |
+| --- | --- | --- |
+| `N 个文件已恢复` | 正常，图片随数据库一起回来了 | 抽查一张产品图能否显示 |
+| `该备份不含图片归档，磁盘上的现有图片**未被改动**` | 恢复的是旧格式备份 | **手动核对**图片与数据库是否匹配 |
+| `无` | 该备份和本机都没有图片 | 无需处理 |
 
 ### 步骤 4：恢复后核对
 
 ```bash
 python manage.py integrity-check     # 期望：[OK] 通过
-python manage.py db-info             # 期望：结构版本 21，记录数与步骤 0 一致
+python manage.py db-info             # 期望：结构版本 22，记录数与步骤 0 一致
+```
+
+再确认图片目录存在且非空（有上传过产品图时）：
+
+```bash
+# Linux
+ls data/product-images | wc -l
+
+# Windows
+dir /b data\product-images | find /c /v ""
 ```
 
 ### 步骤 5：启动并抽查
@@ -140,15 +165,30 @@ python manage.py restore exports/backups/traceability_pre-restore_XXXXXXXXTXXXXX
 
 ## 3. 备份内容与校验
 
-`backup` 生成的是一对文件：
+`backup` 生成的是**一组**文件：
 
-| 文件 | 内容 |
-| --- | --- |
-| `traceability_<时间戳>.db` | 数据库快照 |
-| `traceability_<时间戳>.db.manifest.json` | SHA-256、结构版本、大小、各表记录数、自检结果、SQLite 版本 |
+| 文件 | 内容 | 何时产生 |
+| --- | --- | --- |
+| `traceability_<时间戳>.db` | 数据库快照 | 总是 |
+| `traceability_<时间戳>.db.images.zip` | **产品图片**（`data/product-images/`） | 数据库里有图片时 |
+| `traceability_<时间戳>.db.manifest.json` | SHA-256、结构版本、大小、各表记录数、图片数量与归档校验和、自检结果、SQLite 版本 | 总是 |
 
-**校验清单是恢复安全的基础**：`restore` 会先核对 SHA-256，
+**校验清单是恢复安全的基础**：`restore` 会先核对数据库与图片归档的 SHA-256，
 确保要装回去的正是当初备份的那一份。
+
+> **数据库与图片必须一起复制到异机。** 缺了 `.images.zip`，
+> 恢复后数据库里的 `/api/product-images/<文件名>` 引用会**全部 404**——
+> 产品资料页变成一堆破图，而数据本身看不出异常。
+> `verify-backup` 会在归档缺失或损坏时**直接报错**，不让这种备份被误用。
+
+### 为什么图片单独归档而不是塞进 `.db`
+
+数据库里存的是图片 URL，字节在磁盘上（`data/product-images/`）。
+单独一个 `.zip` 让 `.db` 保持为**普通 SQLite 文件**——
+既有工具、旧版清单和外部查看器都照常可用。
+
+归档是**确定性**的（成员时间戳固定为 1980-01-01），
+所以同样的图片两次备份得到**逐字节相同**的归档，便于比对。
 
 ### 为什么不是直接复制文件
 
@@ -161,6 +201,16 @@ python manage.py restore exports/backups/traceability_pre-restore_XXXXXXXXTXXXXX
 - 备份后**立即**执行 `PRAGMA integrity_check`，不通过就报错并中止（不会留下一份"看起来像备份"的坏文件）
 - 记录 `foreign_key_check` 与结构版本
 - 备份前检查磁盘空间：**磁盘写满导致备份中途失败，比没有备份更糟，因为它看起来像有备份**
+- 图片归档在数据库快照之后、写清单之前生成，所以清单描述的是**同一个时刻**的两半
+
+### 恢复图片时的安全措施
+
+- 归档先解压到临时目录，再**原子替换**，中断不会留下半套图片
+- 覆盖前把现有图片目录**移到一旁**（`product-images.pre-restore`），恢复错了可以退回
+- 归档中若含 `../` 之类**逃逸路径**，立即中止恢复
+- **不含图片归档的旧备份**（或从未上传过图片的数据库）恢复时，
+  **不会删除磁盘上已有的图片**——恢复不该替人决定删掉无法再生的资料。
+  此时 `restore` 会明确提示「现有图片未被改动，请手动核对」
 
 ---
 
@@ -230,6 +280,9 @@ rsync -av --delete /opt/product-traceability/exports/backups/ \
 # Windows：映射网络盘后复制
 robocopy "E:\Product_Traceability_System\exports\backups" "\\nas\pts-backups\%COMPUTERNAME%" /MIR
 ```
+
+上面两条都是**整目录同步**，因此数据库、图片归档和校验清单会一起过去——
+**不要**改成只挑 `*.db` 复制，那会把图片丢在源机器上。
 
 > **同一块盘上的备份不能抵御磁盘损坏。** 备份的价值取决于它有多少份副本、分布在哪里。
 > 至少保留：本机一份 + 异机一份。有条件再加一份离线副本。

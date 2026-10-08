@@ -36,11 +36,23 @@ import json
 import os
 import shutil
 import sqlite3
+import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 MANIFEST_SUFFIX = ".manifest.json"
 DEFAULT_BACKUP_PREFIX = "traceability"
+
+#: Where uploaded product images live, relative to the database file. The
+#: database stores ``/api/product-images/<name>`` URLs, so the rows are useless
+#: without the files: a restored database that points at images nobody has is a
+#: catalogue full of broken pictures.
+IMAGE_DIR_NAME = "product-images"
+
+#: Companion archive written next to a database backup when there are images.
+#: Kept separate rather than folded into the .db so existing backups, the
+#: manifest format and the restore path all keep working unchanged.
+IMAGE_ARCHIVE_SUFFIX = ".images.zip"
 
 # Tables whose row counts are recorded in the manifest. A restore drill can
 # compare these against the restored database without knowing the full schema.
@@ -77,6 +89,8 @@ class BackupReport:
     integrity: str
     table_counts: dict[str, int] = field(default_factory=dict)
     sqlite_version: str = ""
+    #: ``None`` when there were no images to archive, or when archiving is off.
+    images: dict | None = None
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -94,6 +108,8 @@ class VerificationReport:
     sha256: str | None = None
     integrity: str | None = None
     table_counts: dict[str, int] = field(default_factory=dict)
+    #: Number of images the backup carries, when it records any.
+    image_count: int | None = None
 
     def to_dict(self) -> dict:
         data = asdict(self)
@@ -108,12 +124,21 @@ class RestoreReport:
     safety_copy: Path | None
     schema_version: int
     sha256: str
+    #: How many image files the restore installed (0 when the backup has none).
+    images_restored: int = 0
+    #: Where the previous image directory was moved before being replaced.
+    images_safety_copy: Path | None = None
+    #: True when the backup carried no images and an existing directory was kept.
+    images_left_in_place: bool = False
 
     def to_dict(self) -> dict:
         data = asdict(self)
         data["restored_from"] = str(self.restored_from)
         data["database"] = str(self.database)
         data["safety_copy"] = str(self.safety_copy) if self.safety_copy else None
+        data["images_safety_copy"] = (
+            str(self.images_safety_copy) if self.images_safety_copy else None
+        )
         return data
 
 
@@ -287,6 +312,143 @@ def _unique_path(directory: Path, stem: str, suffix: str) -> Path:
     raise BackupError(f"备份目录中同名文件过多：{stem}{suffix}")
 
 
+def image_dir_for(database: str | Path) -> Path:
+    """The product-image directory that belongs to a database.
+
+    ``traceability/api/products.py`` derives it the same way — from the database
+    path rather than from a setting — so a backup taken from a given database
+    always looks beside that same file.
+    """
+    return Path(database).resolve().parent / IMAGE_DIR_NAME
+
+
+def image_archive_path(backup_path: str | Path) -> Path:
+    """Where the image archive for a database backup lives."""
+    path = Path(backup_path)
+    return path.with_name(path.name + IMAGE_ARCHIVE_SUFFIX)
+
+
+def _image_files(directory: Path) -> list[Path]:
+    """Every regular file under ``directory``, in a stable order."""
+    if not directory.is_dir():
+        return []
+    return sorted(path for path in directory.rglob("*") if path.is_file())
+
+
+def archive_images(database: str | Path, backup_path: str | Path) -> dict | None:
+    """Write the product images beside a backup. Returns the manifest entry.
+
+    ``None`` when there is nothing to archive, so a system that has never had an
+    image uploaded does not grow an empty archive on every run.
+    """
+    directory = image_dir_for(database)
+    files = _image_files(directory)
+    if not files:
+        return None
+
+    archive = image_archive_path(backup_path)
+    # Deterministic: same inputs, same archive. A ZIP records modification times,
+    # so the members are added with a fixed stamp rather than whatever the file
+    # system says, which would make two identical backups differ byte for byte.
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        for path in files:
+            relative = path.relative_to(directory).as_posix()
+            info = zipfile.ZipInfo(relative, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            bundle.writestr(info, path.read_bytes())
+
+    return {
+        "archive": archive.name,
+        "file_count": len(files),
+        "total_bytes": sum(path.stat().st_size for path in files),
+        "sha256": sha256_file(archive),
+    }
+
+
+def verify_image_archive(backup_path: str | Path, entry: dict) -> tuple[list[str], int | None]:
+    """Check an image archive against its manifest entry.
+
+    Returns ``(problems, file_count)``. A backup whose archive is missing, altered
+    or unreadable is not restorable — the database rows would come back pointing
+    at pictures that are not there, which is worse than a restore that refuses.
+    """
+    problems: list[str] = []
+    archive = image_archive_path(backup_path)
+
+    if not archive.is_file():
+        return ([f"图片归档缺失：{archive.name}（数据库里的图片引用将全部失效）"], None)
+
+    recorded = entry.get("sha256")
+    actual = sha256_file(archive)
+    if recorded and recorded != actual:
+        problems.append(
+            f"图片归档 SHA-256 不匹配（{archive.name}）：与备份时记录的不一致"
+        )
+
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            bad = bundle.testzip()
+            if bad is not None:
+                problems.append(f"图片归档内文件损坏：{bad}")
+            count = len(bundle.namelist())
+    except (zipfile.BadZipFile, OSError) as error:
+        return (problems + [f"图片归档无法读取：{error}"], None)
+
+    expected = entry.get("file_count")
+    if isinstance(expected, int) and count != expected:
+        problems.append(f"图片数量不符：清单记录 {expected}，归档内 {count}")
+        return (problems, count)
+
+    return (problems, count)
+
+
+def restore_images(backup_path: str | Path, database: str | Path) -> tuple[int, Path | None]:
+    """Install a backup's images. Returns ``(file_count, safety_copy)``.
+
+    The previous directory is moved aside rather than deleted, so a restore made
+    against the wrong backup is undoable in the same way the database restore is.
+
+    Extraction goes to a temporary directory first and is then swapped in, so an
+    interrupted restore cannot leave a half-populated image directory behind.
+    """
+    archive = image_archive_path(backup_path)
+    if not archive.is_file():
+        return (0, None)
+
+    target = image_dir_for(database)
+    safety_copy: Path | None = None
+    if target.exists():
+        safety_copy = target.with_name(target.name + ".pre-restore")
+        if safety_copy.exists():
+            shutil.rmtree(safety_copy, ignore_errors=True)
+        os.replace(target, safety_copy)
+
+    staging = target.with_name(target.name + ".restore-tmp")
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            for member in bundle.namelist():
+                # Reject anything that would escape the directory: a crafted
+                # archive must not be able to write outside it.
+                resolved = (staging / member).resolve()
+                if not resolved.is_relative_to(staging.resolve()):
+                    raise BackupError(f"图片归档包含非法路径，已中止恢复：{member}")
+            bundle.extractall(staging)
+        os.replace(staging, target)
+    except Exception:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        if safety_copy is not None and not target.exists():
+            os.replace(safety_copy, target)
+        raise
+
+    return (len(_image_files(target)), safety_copy)
+
+
 def create_backup(
     database: str | Path,
     backup_dir: str | Path,
@@ -331,6 +493,12 @@ def create_backup(
     version = schema_version(target)
     counts = table_counts(target)
 
+    # The database stores /api/product-images/<name> URLs, so a backup without
+    # the files restores into a catalogue of broken pictures. Archived beside the
+    # .db rather than inside it, so the file stays a plain SQLite database that
+    # existing tooling and older manifests still understand.
+    images = archive_images(source, target)
+
     report = BackupReport(
         path=target,
         manifest_path=manifest_path_for(target),
@@ -341,6 +509,7 @@ def create_backup(
         integrity=integrity,
         table_counts=counts,
         sqlite_version=sqlite3.sqlite_version,
+        images=images,
     )
     report.manifest_path.write_text(
         json.dumps(report.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -419,6 +588,15 @@ def verify_backup(backup_path: str | Path, *, expect_schema_version: int | None 
             "请使用更新的程序来恢复"
         )
 
+    # A backup taken before images were archived has no entry, and that is not a
+    # problem: it simply cannot restore images, which the caller is told about
+    # through image_count staying None.
+    image_count: int | None = None
+    entry = (manifest or {}).get("images")
+    if isinstance(entry, dict):
+        image_problems, image_count = verify_image_archive(path, entry)
+        problems.extend(image_problems)
+
     return VerificationReport(
         path=path,
         ok=not problems,
@@ -427,6 +605,7 @@ def verify_backup(backup_path: str | Path, *, expect_schema_version: int | None 
         sha256=digest,
         integrity=integrity,
         table_counts=table_counts(path),
+        image_count=image_count,
     )
 
 
@@ -497,12 +676,27 @@ def restore_backup(
             + (f"恢复前的副本保留在 {safety_copy}" if safety_copy else "")
         )
 
+    # Images are restored only when the backup actually carries an archive. A
+    # backup taken before images were archived leaves whatever is on disk alone:
+    # deleting it would destroy pictures that nothing else can reproduce, and a
+    # restore is not the moment to be tidy.
+    images_restored = 0
+    images_safety_copy: Path | None = None
+    images_left_in_place = False
+    if image_archive_path(source).is_file():
+        images_restored, images_safety_copy = restore_images(source, target)
+    elif image_dir_for(target).is_dir() and _image_files(image_dir_for(target)):
+        images_left_in_place = True
+
     return RestoreReport(
         restored_from=source,
         database=target,
         safety_copy=safety_copy,
         schema_version=schema_version(target),
         sha256=sha256_file(target),
+        images_restored=images_restored,
+        images_safety_copy=images_safety_copy,
+        images_left_in_place=images_left_in_place,
     )
 
 
@@ -524,7 +718,13 @@ def list_backups(backup_dir: str | Path, *, prefix: str = DEFAULT_BACKUP_PREFIX)
 def prune_backups(
     backup_dir: str | Path, *, keep: int, prefix: str = DEFAULT_BACKUP_PREFIX
 ) -> list[Path]:
-    """Delete the oldest backups, keeping the newest ``keep``. Manifests go too."""
+    """Delete the oldest backups, keeping the newest ``keep``.
+
+    The manifest and the image archive go with the database file. Leaving an
+    archive behind would keep the images alive but orphaned — invisible to
+    ``list_backups``, so nothing would ever clean them up, and the backup
+    directory would grow without bound.
+    """
     backups = list_backups(backup_dir, prefix=prefix)
     if keep < 0:
         raise BackupError("保留数量不能为负数")
@@ -534,6 +734,9 @@ def prune_backups(
         manifest = manifest_path_for(path)
         if manifest.exists():
             manifest.unlink()
+        archive = image_archive_path(path)
+        if archive.exists():
+            archive.unlink()
         path.unlink()
         removed.append(path)
     return removed

@@ -95,9 +95,18 @@ def command_backup(args: argparse.Namespace) -> int:
     print(f"    SHA-256   {report.sha256}")
     print("    记录数：")
     _print_counts(report.table_counts)
+    if report.images:
+        archive = report.path.with_name(report.path.name + ".images.zip")
+        print("    产品图片：")
+        print(f"        {report.images['file_count']} 个文件，"
+              f"{_human_bytes(report.images['total_bytes'])}")
+        print(f"        归档      {archive}")
+    else:
+        print("    产品图片  无（该数据库没有上传过图片）")
     print()
     print("  提示：请把备份复制到另一块磁盘或受控文件服务器。")
     print("        备份在同一块盘上不能抵御磁盘损坏。")
+    print("        数据库与图片归档要一起复制，缺一个就恢复不出完整数据。")
     return 0
 
 
@@ -109,6 +118,10 @@ def command_verify_backup(args: argparse.Namespace) -> int:
     print(f"    SHA-256   {report.sha256}")
     if report.ok:
         print(f"{OK} 备份可用")
+        if report.image_count is None:
+            print("    产品图片  该备份不含图片归档（旧格式备份，或数据库从未上传过图片）")
+        else:
+            print(f"    产品图片  {report.image_count} 个文件（归档已校验）")
         print("    记录数：")
         _print_counts(report.table_counts)
         return 0
@@ -136,6 +149,15 @@ def command_restore(args: argparse.Namespace) -> int:
     if report.safety_copy:
         print(f"    恢复前副本    {report.safety_copy}")
     print(f"    结构版本      {report.schema_version}")
+    if report.images_restored:
+        print(f"    产品图片      {report.images_restored} 个文件已恢复")
+        if report.images_safety_copy:
+            print(f"    恢复前图片    {report.images_safety_copy}")
+    elif report.images_left_in_place:
+        print("    产品图片      该备份不含图片归档，磁盘上的现有图片**未被改动**")
+        print("                  若这些图片与恢复后的数据库不匹配，请手动核对")
+    else:
+        print("    产品图片      无")
     print()
     print("  请重新启动服务，并确认数据与预期一致。")
     return 0
