@@ -33,7 +33,7 @@ from traceability.auth import (
     require_admin,
     require_product_model_access,
 )
-from traceability.code_sets import product_code_set_dict
+from traceability.code_sets import code_set_dicts, product_code_set_dict
 from traceability.codes import (
     machine_identification_code,
     make_qr_svg,
@@ -299,7 +299,7 @@ def create_product_code_sets(product_model_id: int):
         """,
         generated_ids,
     ).fetchall()
-    return success([product_code_set_dict(database, row) for row in rows], 201)
+    return success(code_set_dicts(database, rows), 201)
 
 
 @code_sets_bp.get("/api/product-code-sets")
@@ -337,7 +337,7 @@ def list_product_code_sets():
         """,
         parameters,
     ).fetchall()
-    return success([product_code_set_dict(database, row) for row in rows])
+    return success(code_set_dicts(database, rows))
 
 
 @code_sets_bp.get("/api/product-code-batches")
@@ -411,7 +411,7 @@ def get_product_code_batch(generation_batch_id: int):
     return success(
         {
             "batch": product_code_batch_dict(batch),
-            "sets": [product_code_set_dict(database, row) for row in rows],
+            "sets": code_set_dicts(database, rows),
             "pagination": {
                 "page": page,
                 "pageSize": page_size,
@@ -420,6 +420,12 @@ def get_product_code_batch(generation_batch_id: int):
             },
         }
     )
+
+
+#: How many code sets to read at once when building an export. Large enough that
+#: the query count is negligible, small enough that the parts of every set in a
+#: long export are never all resident.
+ZIP_PART_CHUNK = 200
 
 
 def write_code_sets_zip(
@@ -433,8 +439,15 @@ def write_code_sets_zip(
     writer = csv.writer(manifest)
     writer.writerow(["生成批次", "产品套码", "类型", "顺序", "名称", "供应商", "识别码"])
     with ZipFile(output, "w", ZIP_DEFLATED) as archive:
-        for row in rows:
-            data = product_code_set_dict(database, row)
+        # Parts are read a chunk of sets at a time. Reading them per row ran a
+        # query for every set — 10,001 for a 10,000-code export — while reading
+        # every set up front would hold all of them at once. A chunk bounds both.
+        cache: dict[int, dict] = {}
+        for index, row in enumerate(rows):
+            if row["id"] not in cache:
+                chunk = rows[index : index + ZIP_PART_CHUNK]
+                cache = {item["id"]: item for item in code_set_dicts(database, chunk)}
+            data = cache[row["id"]]
             batch_folder = safe_archive_name(
                 row["batch_code"] if "batch_code" in row.keys() else "历史批次",
                 "历史批次",

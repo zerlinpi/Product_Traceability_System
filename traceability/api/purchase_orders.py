@@ -313,13 +313,14 @@ def export_purchase_orders():
         created_from=request.args.get("from"),
         created_to=request.args.get("to"),
     )
-    table = [
-        [
-            purchase_order_export_values(row)[0][column]
-            for column in PURCHASE_ORDER_EXPORT_COLUMNS
-        ]
-        for row in rows
-    ]
+    # Build each order's column map once, not once per cell. The previous form
+    # indexed ``purchase_order_export_values(row)[0]`` inside the inner loop, so
+    # a 48-column template rebuilt the same dictionary 48 times per order —
+    # 96,000 times for 2,000 orders, which cost both the time and the garbage.
+    table = []
+    for row in rows:
+        values, _is_legacy_linked = purchase_order_export_values(row)
+        table.append([values[column] for column in PURCHASE_ORDER_EXPORT_COLUMNS])
     workbook = build_traceability_xlsx(PURCHASE_ORDER_EXPORT_COLUMNS, table)
     filename = f"采购订单_批量_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return send_file(

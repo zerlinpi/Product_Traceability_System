@@ -60,6 +60,16 @@ ENDPOINTS = (
 )
 
 
+#: Export endpoints. These are the ones that build a whole payload in memory, so
+#: they are measured for peak allocation rather than for bytes sent.
+EXPORTS = (
+    ("/api/records/export.xlsx", "Excel，最多 100000 条记录"),
+    ("/api/products/1/qrcodes.zip", "ZIP，该产品的全部历史二维码"),
+    ("/api/product-code-batches/1/qrcodes.zip", "ZIP，单个生成批次"),
+    ("/api/purchase-orders/export", "Excel，领星 48 列模板"),
+)
+
+
 def seed(database: Path, scale: int) -> dict[str, int]:
     """Fill a migrated database with plausible rows. Returns what was inserted.
 
@@ -314,6 +324,50 @@ def measure(database: Path, rows: dict[str, int]) -> list[dict]:
     return results
 
 
+def measure_exports(database: Path, rows: dict[str, int]) -> list[dict]:
+    """Time the export endpoints and record how much memory they hold.
+
+    Exports build their whole payload before sending it — a ZIP or a workbook is
+    written into a BytesIO. That is fine at a few hundred rows and not fine at a
+    hundred thousand, so the peak traced allocation matters more here than the
+    wall-clock time.
+
+    ``tracemalloc`` sees Python allocations, which is what grows: the workbook,
+    the archive, and the per-row dictionaries feeding them. It does not see the
+    compressed bytes the C layer holds, so treat the figure as a lower bound.
+    """
+    import tracemalloc
+
+    app = create_app({"TESTING": True, "DATABASE": str(database)})
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["user_id"] = 1
+        session["role"] = "ADMIN"
+        session["username"] = "admin"
+
+    results = []
+    for url, note in EXPORTS:
+        tracemalloc.start()
+        try:
+            started = time.perf_counter()
+            response = client.get(url)
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            _current, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        results.append(
+            {
+                "url": url,
+                "note": note,
+                "status": response.status_code,
+                "ms": elapsed_ms,
+                "peak_mb": peak / 1024 / 1024,
+                "bytes": len(response.get_data()),
+            }
+        )
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scale", type=int, default=1, help="multiply every row count")
@@ -342,6 +396,18 @@ def main() -> int:
             f"{item['returned'] if item['returned'] is not None else '-':>8}"
             f"  / 共 {total}"
         )
+
+    print()
+    print("=== 导出端点（峰值内存）===")
+    print(f"  {'端点':<44} {'状态':>4} {'耗时':>10} {'峰值内存':>10} {'产物':>10}")
+    for item in measure_exports(database, rows):
+        print(
+            f"  {item['url']:<44} {item['status']:>4} {item['ms']:>8.0f} ms "
+            f"{item['peak_mb']:>8.1f} MB {item['bytes'] / 1024 / 1024:>8.2f} MB"
+        )
+    print()
+    print("  说明：导出把整个产物构建在内存里（ZIP / 工作簿写入 BytesIO）。")
+    print("        峰值内存由 tracemalloc 统计 Python 侧分配，是下限。")
 
     print()
     print("  说明：耗时是 Flask 测试客户端的单次调用，不含网络。")

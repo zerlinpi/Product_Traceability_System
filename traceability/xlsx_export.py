@@ -42,23 +42,28 @@ def _cell_xml(row: int, column: int, value: object, style: int = 0) -> str:
     )
 
 
+def _row_xml(row_index: int, values: list[object], style: int = 0) -> str:
+    """One ``<row>`` element. Built per row and written straight out.
+
+    Kept separate from the assembly so the sheet never has to exist as a whole:
+    a row-per-string list, the joined copy and the f-string copy that followed it
+    held the entire sheet three times over.
+    """
+    return (
+        f'<row r="{row_index}">'
+        + "".join(
+            _cell_xml(row_index, column_index, value, style)
+            for column_index, value in enumerate(values, 1)
+        )
+        + "</row>"
+    )
+
+
 def build_traceability_xlsx(headers: list[str], rows: list[list[object]]) -> bytes:
     last_column = _column_name(len(headers))
-    sheet_rows = [
-        '<row r="1" ht="24" customHeight="1">'
-        + "".join(_cell_xml(1, index, value, 1) for index, value in enumerate(headers, 1))
-        + "</row>"
-    ]
-    for row_index, row in enumerate(rows, 2):
-        style = 2 if row_index % 2 == 0 else 0
-        sheet_rows.append(
-            f'<row r="{row_index}">'
-            + "".join(
-                _cell_xml(row_index, column_index, value, style)
-                for column_index, value in enumerate(row, 1)
-            )
-            + "</row>"
-        )
+    header_row = _row_xml(1, headers, 1).replace(
+        '<row r="1">', '<row r="1" ht="24" customHeight="1">', 1
+    )
 
     widths = []
     for header in headers:
@@ -77,15 +82,39 @@ def build_traceability_xlsx(headers: list[str], rows: list[list[object]]) -> byt
         for index, width in enumerate(widths[: len(headers)], 1)
     )
     last_row = max(1, len(rows) + 1)
-    worksheet = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
-  <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
-  <sheetFormatPr defaultRowHeight="20"/>
-  <cols>{columns_xml}</cols>
-  <sheetData>{''.join(sheet_rows)}</sheetData>
-  <autoFilter ref="A1:{last_column}{last_row}"/>
-  <pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>
-</worksheet>'''
+
+    def write_sheet(handle) -> None:
+        """Stream the worksheet into the archive, one row at a time.
+
+        Writing through the ZIP entry rather than assembling a string first is
+        what keeps this bounded: the sheet XML for 2,000 orders is about 10 MB,
+        and building it in memory cost 45 MB to produce a 321 KB workbook.
+        """
+        handle.write(
+            (
+                '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">\n'
+                '  <sheetViews><sheetView workbookViewId="0">'
+                '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
+                "</sheetView></sheetViews>\n"
+                '  <sheetFormatPr defaultRowHeight="20"/>\n'
+                f"  <cols>{columns_xml}</cols>\n"
+                "  <sheetData>"
+            ).encode("utf-8")
+        )
+        handle.write(header_row.encode("utf-8"))
+        for row_index, row in enumerate(rows, 2):
+            style = 2 if row_index % 2 == 0 else 0
+            handle.write(_row_xml(row_index, row, style).encode("utf-8"))
+        handle.write(
+            (
+                "</sheetData>\n"
+                f'  <autoFilter ref="A1:{last_column}{last_row}"/>\n'
+                '  <pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" '
+                'header="0.2" footer="0.2"/>\n'
+                "</worksheet>"
+            ).encode("utf-8")
+        )
 
     content_types = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -136,5 +165,6 @@ def build_traceability_xlsx(headers: list[str], rows: list[list[object]]) -> byt
         archive.writestr("xl/workbook.xml", workbook)
         archive.writestr("xl/_rels/workbook.xml.rels", workbook_relationships)
         archive.writestr("xl/styles.xml", styles)
-        archive.writestr("xl/worksheets/sheet1.xml", worksheet)
+        with archive.open("xl/worksheets/sheet1.xml", "w") as sheet:
+            write_sheet(sheet)
     return output.getvalue()
