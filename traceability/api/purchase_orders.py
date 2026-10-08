@@ -38,6 +38,7 @@ from traceability.codes import new_event_id
 from traceability.db import get_db
 from traceability.errors import ApiError
 from traceability.idempotent_http import run_idempotent
+from traceability.pagination import parse_list_window
 from traceability.purchasing import (
     PURCHASE_ORDER_EXPORT_COLUMNS,
     parse_purchase_order_input,
@@ -130,12 +131,21 @@ def _impl_create_purchase_order():
 
 @purchase_orders_bp.get("/api/purchase-orders")
 def list_purchase_orders():
-    return success([purchase_order_data(row) for row in query_purchase_orders(
+    # Bounded: this table gains a row per order and the front end renders every
+    # row it is handed. The total travels in a header, so a caller can tell a
+    # window from the whole table. The export path calls the same query without
+    # a window, because a file is not a screen.
+    window = parse_list_window()
+    rows = query_purchase_orders(
         sync_status=request.args.get("syncStatus"),
         supplier_id=request.args.get("supplierId"),
         created_from=request.args.get("from"),
         created_to=request.args.get("to"),
-    )])
+        limit=window.limit,
+        offset=window.offset,
+    )
+    total = rows[0]["total_count"] if rows else 0
+    return window.apply(success([purchase_order_data(row) for row in rows]), total)
 
 
 @purchase_orders_bp.get("/api/purchase-orders/<int:purchase_order_id>")

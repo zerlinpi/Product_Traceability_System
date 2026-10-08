@@ -26,6 +26,7 @@ from traceability.auth import current_actor_id, require_admin
 from traceability.codes import normalize_entity_code
 from traceability.db import get_db
 from traceability.errors import ApiError
+from traceability.pagination import parse_list_window
 from traceability.production import supplier_inventory_batch_forward_trace
 from traceability.responses import success
 from traceability.serializers import supplier_inventory_batch_dict
@@ -54,19 +55,28 @@ def list_supplier_inventory_batches():
     if request.args.get("available") == "1":
         clauses.extend(["sib.active = 1", "sib.quantity_available > 0", "pt.active = 1", "s.active = 1"])
     where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    # Bounded: one row per incoming batch and the front end renders every row it
+    # is given. COUNT(*) OVER () is evaluated before LIMIT, so the total comes
+    # back with the window instead of costing a second scan with the same filters.
+    window = parse_list_window()
     rows = database.execute(
         f"""
         SELECT sib.*, pt.part_code, pt.name AS part_name, pt.specification,
-               s.id AS supplier_id, s.supplier_code, s.name AS supplier_name
+               s.id AS supplier_id, s.supplier_code, s.name AS supplier_name,
+               COUNT(*) OVER () AS total_count
         FROM supplier_inventory_batches sib
         JOIN part_types pt ON pt.id = sib.part_type_id
         JOIN suppliers s ON s.id = pt.supplier_id
         {where_clause}
         ORDER BY s.name, pt.name, sib.active DESC, sib.received_date DESC, sib.id DESC
+        LIMIT ? OFFSET ?
         """,
-        parameters,
+        [*parameters, window.limit, window.offset],
     ).fetchall()
-    return success([supplier_inventory_batch_dict(row) for row in rows])
+    total = rows[0]["total_count"] if rows else 0
+    return window.apply(
+        success([supplier_inventory_batch_dict(row) for row in rows]), total
+    )
 
 
 @supplier_inventory_bp.post("/api/supplier-inventory-batches")

@@ -26,6 +26,7 @@ from traceability.codes import batch_identification_code, make_qr_svg
 from traceability.db import get_db
 from traceability.errors import ApiError
 from traceability.idempotent_http import run_idempotent
+from traceability.pagination import parse_list_window
 from traceability.production_orders import (
     generate_production_order_for_po,
     production_order_data,
@@ -161,28 +162,39 @@ def list_production_orders():
         parameters.append(operator_id)
     where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     database = get_db()
+    # Bounded like the other list endpoints: one row per production order, and
+    # the front end lays out every row it is given. COUNT(*) OVER () is evaluated
+    # before LIMIT, so the total comes back with the window instead of needing a
+    # second query with the same filters.
+    window = parse_list_window()
     rows = database.execute(
         f"""
         SELECT pro.*, po.po_no, po.quantity, po.part_type_id,
                pb.batch_code, pb.product_model_id, pb.planned_quantity,
-               pb.prefix, pb.generated_at, pm.model_code, pm.name AS product_name
+               pb.prefix, pb.generated_at, pm.model_code, pm.name AS product_name,
+               COUNT(*) OVER () AS total_count
         FROM production_orders pro
         JOIN purchase_orders po ON po.id = pro.purchase_order_id
         JOIN production_batches pb ON pb.id = pro.production_batch_id
         JOIN product_models pm ON pm.id = pb.product_model_id
         {where_clause}
         ORDER BY pro.created_at DESC, pro.id DESC
+        LIMIT ? OFFSET ?
         """,
-        parameters,
+        [*parameters, window.limit, window.offset],
     ).fetchall()
+    total = rows[0]["total_count"] if rows else 0
     # Batched flow state (登记/质量/已入库) so the list shows where each order
     # stands without an extra query per row.
     progress = production_order_progress_map(database, list(rows))
-    return success(
-        [
-            {**production_order_data(row), "progress": progress.get(row["id"], {})}
-            for row in rows
-        ]
+    return window.apply(
+        success(
+            [
+                {**production_order_data(row), "progress": progress.get(row["id"], {})}
+                for row in rows
+            ]
+        ),
+        total,
     )
 
 

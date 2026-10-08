@@ -33,6 +33,7 @@ from traceability.lingxing_writes import (
     guard_is_stale,
     lingxing_service,
 )
+from traceability.pagination import parse_list_window
 from traceability.purchasing import purchase_order_row
 from traceability.receipts import inbound_receipt_data, inbound_receipt_row
 from traceability.responses import success
@@ -89,21 +90,31 @@ def create_inbound_receipt():
 def list_inbound_receipts():
     # Operations needs read access in order to push receipts created by the
     # warehouse. Mutating receipt creation remains warehouse-only.
-    rows = get_db().execute(
+    #
+    # Bounded: this table gains a row per receipt and the front end renders every
+    # row it is given. COUNT(*) OVER () is evaluated before LIMIT, so the total
+    # arrives with the window rather than costing a second scan.
+    database = get_db()
+    window = parse_list_window()
+    rows = database.execute(
         """
         SELECT ir.*, po.po_no, po.sync_status AS purchase_order_sync_status,
                po.lingxing_po_id, s.name AS supplier_name,
                pt.part_code, pt.name AS part_name,
-               pm.name AS product_model_name
+               pm.name AS product_model_name,
+               COUNT(*) OVER () AS total_count
         FROM inbound_receipts ir
         JOIN purchase_orders po ON po.id = ir.purchase_order_id
         LEFT JOIN suppliers s ON s.id = po.supplier_id
         LEFT JOIN part_types pt ON pt.id = po.part_type_id
         LEFT JOIN product_models pm ON pm.id = po.product_model_id
         ORDER BY ir.received_at DESC, ir.id DESC
-        """
+        LIMIT ? OFFSET ?
+        """,
+        (window.limit, window.offset),
     ).fetchall()
-    return success([inbound_receipt_data(row) for row in rows])
+    total = rows[0]["total_count"] if rows else 0
+    return window.apply(success([inbound_receipt_data(row) for row in rows]), total)
 
 @inbound_receipts_bp.get("/api/inbound-receipts/<int:receipt_id>")
 def get_inbound_receipt(receipt_id: int):

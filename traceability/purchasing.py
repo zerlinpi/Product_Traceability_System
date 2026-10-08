@@ -296,6 +296,8 @@ def query_purchase_orders(
     supplier_id: object = None,
     created_from: object = None,
     created_to: object = None,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[sqlite3.Row]:
     """List/export query. Filters arrive as arguments, not read from ``request``.
 
@@ -303,6 +305,11 @@ def query_purchase_orders(
     operations only ever see their own orders. The route pulls the query string
     apart and passes the raw values in, so this module stays free of Flask and
     the validation order below is the only order callers see.
+
+    ``limit`` defaults to ``None`` — no window — because the export path needs
+    every matching order in one file. The list route passes a window, because a
+    browser table is not an export: this table gains a row per order and the
+    front end renders whatever it is given, without virtualisation.
     """
     clauses: list[str] = []
     parameters: list[Any] = []
@@ -330,6 +337,10 @@ def query_purchase_orders(
         clauses.append("po.created_by_user_id = ?")
         parameters.append(current_actor_id())
     where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    window_clause = ""
+    if limit is not None:
+        window_clause = "LIMIT ? OFFSET ?"
+        parameters = [*parameters, limit, offset]
     return get_db().execute(
         f"""
         SELECT po.*, s.supplier_code, s.name AS supplier_name,
@@ -339,13 +350,15 @@ def query_purchase_orders(
                (SELECT COALESCE(SUM(ir.quantity), 0) FROM inbound_receipts ir
                  WHERE ir.purchase_order_id = po.id) AS received_quantity,
                (SELECT MAX(ir.received_at) FROM inbound_receipts ir
-                 WHERE ir.purchase_order_id = po.id) AS last_received_at
+                 WHERE ir.purchase_order_id = po.id) AS last_received_at,
+               COUNT(*) OVER () AS total_count
         FROM purchase_orders po
         LEFT JOIN suppliers s ON s.id = po.supplier_id
         LEFT JOIN part_types pt ON pt.id = po.part_type_id
         LEFT JOIN product_models pm ON pm.id = po.product_model_id
         {where_clause}
         ORDER BY po.created_at DESC, po.id DESC
+        {window_clause}
         """,
         parameters,
     ).fetchall()

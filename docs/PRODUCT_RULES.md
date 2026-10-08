@@ -265,11 +265,12 @@ ASSEMBLED --hold--> HOLD       （需 ADMIN，原因 1-500 字符）
 | 第十七 | `audit_events` 非 append-only，无 hash chain | ✅ 已实现（只追加 + 哈希链 + 校验命令） | `SECURITY.md` §6 |
 | 第十七 | 审计链尾未外部锚定 | ⚠️ 待处理 | `SECURITY.md` §6 |
 | 第十九 | systemd 沙箱指令未启用 | ⚠️ 待处理 | `SECURITY.md` §4 |
-| 第三十七 | Excel/CSV 导出未防公式注入 | ⚠️ 待处理 | `SECURITY.md` §7 |
-| 第三十八 | 图片未限制像素尺寸（解压炸弹） | ⚠️ 待处理 | `SECURITY.md` §7 |
-| 第十二 | 前端 `innerHTML` 未全部审计 | ⚠️ 待处理 | `SECURITY.md` §7 |
-| 第十六 | 列表接口基本不分页；导出全内存构建 | ⚠️ 待处理 | `API_CONTRACT.md` §4/§5 |
-| 第十七 | `audit_events` 非 append-only，无 hash chain | ⚠️ 待处理 | 本文档 §9 |
+| 第三十七 | Excel/CSV 导出防公式注入 | ✅ 已实现（`SPREADSHEET_FORMULA_PREFIXES` + 前缀转义） | `SECURITY.md` §7 |
+| 第三十八 | 图片像素尺寸限制（解压炸弹） | ✅ 已实现（`PRODUCT_IMAGE_MAX_SIDE` / `MAX_PIXELS`） | `SECURITY.md` §7 |
+| 第十二 | 前端 `innerHTML` 审计 | ✅ 已实现（前端**未使用** `innerHTML` / `v-html`） | `SECURITY.md` §7 |
+| 第十六 | 关键列表接口不分页（登记/采购/生产/入库/来料） | ✅ 已实现（窗口 + 总数响应头） | `API_CONTRACT.md` §4 |
+| 第十六 | 导出全内存构建 | ⚠️ 待处理 | `API_CONTRACT.md` §5 |
+| 第十七 | `audit_events` 只追加 + 哈希链 + 校验命令 | ✅ 已实现（与上方重复条目，已合并） | `SECURITY.md` §6 |
 | 第十八/三十九 | `manage.py` 缺少 verify/restore/integrity 命令 | ✅ 已实现 | `BACKUP_RESTORE.md` |
 | 第十八 | 备份异机副本与每日自动备份仅为文档指引 | ⚠️ 需运维落实 | `BACKUP_RESTORE.md` §4 |
 | 第三十九 | 升级 preflight / postflight | ✅ 已实现 | `UPGRADE.md` |

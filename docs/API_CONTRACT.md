@@ -95,19 +95,77 @@
 
 ## 4. 分页现状
 
-**绝大多数列表接口不分页，返回全量数据。**
+**列表接口一律返回有界窗口，并在响应头报告总数。**
 
-目前仅 **1 个**接口支持分页：
+响应体形状**没有改变**——仍是 `{"ok": true, "data": [...]}` 的普通数组，
+所以既有调用方不受影响。窗口信息走响应头：
+
+| 响应头 | 含义 |
+| --- | --- |
+| `X-Total-Count` | 符合筛选条件的总行数（窗口之前） |
+| `X-Returned-Count` | 本次响应实际返回的行数 |
+| `X-List-Limit` | 本次生效的窗口大小 |
+
+调用方可以继续忽略这些头（行为与从前一致），也可以据此提示
+「显示最新 500 条，共 30000 条」。
+
+### 窗口大小
+
+| 场景 | 值 |
+| --- | --- |
+| 默认（不传 `limit`） | **500** |
+| `limit` 上限 | **5000** |
+| 显式 `limit` / `offset` | 支持，非法值返回 400 并说明字段 |
+
+默认 500 沿用项目既有约定（`/api/machines`、`/api/part-labels`、
+`/api/records` 早已如此），并非新政策。
+
+### 覆盖范围
+
+已加窗口的列表接口：
 
 ```
-GET /api/production-batches/<int:batch_id>/qr?page=N
-→ { "ok": true, "data": { "items": [...], "page": N, ... } }
+GET /api/batch-trace-records          每次登记一行，增长最快
+GET /api/purchase-orders              每张采购单一行
+GET /api/production-orders            每个生产单一行
+GET /api/inbound-receipts             每次入库一行
+GET /api/supplier-inventory-batches   每批来料一行
 ```
 
-其余列表接口（`/api/products`、`/api/suppliers`、`/api/records`、`/api/purchase-orders`、
-`/api/audit-events`、`/api/inbound-receipts` 等）**无 `limit` / `offset` / cursor 参数**。
+**导出接口不受影响**：`/api/purchase-orders/export` 与 Excel 导出调用同一个查询函数，
+但不传窗口——**文件不是屏幕**，导出必须包含全部匹配行。
+`tests/test_list_pagination.py` 有一条测试专门钉住这一点，
+防止「加窗口」的改动蔓延到导出路径上，那会让工作簿静默丢单。
 
-> 这是第十六目标的主要风险点：数据量增长后这些接口会返回无限增长的结果集。
+### 优化前后（可复现）
+
+```bash
+python tools/benchmark_lists.py        # 播种 30,000 条登记记录后测量
+```
+
+| 端点 | 优化前 | 优化后 |
+| --- | --- | --- |
+| `/api/batch-trace-records` | 10,115 KB / 184 ms | **169 KB / 58 ms** |
+| `/api/purchase-orders` | 1,605 KB / 74 ms | 401 KB / 45 ms |
+| `/api/inbound-receipts` | 1,713 KB / 63 ms | 171 KB / 43 ms |
+| `/api/production-orders` | 1,394 KB / 53 ms | 350 KB / 73 ms |
+| `/api/supplier-inventory-batches` | 1,218 KB / 52 ms | 203 KB / 39 ms |
+
+合计 **16 MB → 1.3 MB**。前端表格**没有虚拟滚动**，会把拿到的每一行都渲染出来，
+所以这不只是带宽问题。
+
+### 仍然全量的接口
+
+`/api/products`、`/api/suppliers`、`/api/product-models`、`/api/audit-events` 等
+返回全量。这些是**下拉框数据源或按业务规模天然有界**的表
+（工厂的供应商是几十个，不是几万个），加窗口会破坏选择器。
+**若其中某个表在真实环境长到数千行，需要重新评估**——
+判断依据是 `tools/benchmark_lists.py` 的输出。
+
+> 唯一仍支持 `?page=N` 信封分页的是二维码接口：
+> `GET /api/production-batches/<int:batch_id>/qr?page=N`
+> → `{ "ok": true, "data": { "items": [...], "page": N, ... } }`
+> 它返回的是分页对象而非数组，属于另一套约定，本次未改动。
 
 ---
 

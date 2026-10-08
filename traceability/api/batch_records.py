@@ -25,6 +25,7 @@ from typing import Any
 from flask import Blueprint, current_app, request
 
 from traceability.audit_events import record_audit_event
+from traceability.pagination import parse_list_window
 from traceability.auth import (
     current_actor_id,
     current_actor_name,
@@ -356,6 +357,21 @@ def list_batch_trace_records():
         parameters.append(operator_id)
 
     where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+    # Bounded like the other list endpoints. This table gains a row per
+    # registration, so an unbounded response reached 10 MB at 30,000 rows and the
+    # browser renders them without virtualisation.
+    window = parse_list_window()
+    total = database.execute(
+        f"""
+        SELECT COUNT(*) AS n
+        FROM batch_trace_records r
+        JOIN production_batches b ON b.id = r.production_batch_id
+        {where_clause}
+        """,
+        parameters,
+    ).fetchone()["n"]
+
     rows = database.execute(
         f"""
         SELECT r.id AS id,
@@ -375,10 +391,11 @@ def list_batch_trace_records():
         LEFT JOIN product_models pm ON pm.id = b.product_model_id
         {where_clause}
         ORDER BY b.generated_at DESC, b.id DESC
+        LIMIT ? OFFSET ?
         """,
-        parameters,
+        [*parameters, window.limit, window.offset],
     ).fetchall()
-    return success([batch_trace_record_dict(row) for row in rows])
+    return window.apply(success([batch_trace_record_dict(row) for row in rows]), total)
 
 
 @batch_records_bp.post("/api/batch-trace/query")
