@@ -82,6 +82,11 @@ jobs:
       - name: Verify docs describe the current system
         run: python tools/check_docs_consistency.py
 
+      # A manual that links to a page nobody wrote is worse than one with no
+      # links: the reader follows it, finds nothing, and stops trusting the rest.
+      - name: Verify the knowledge base links resolve
+        run: python tools/check_knowledge_base.py
+
   frontend:
     name: Frontend (typecheck, build, e2e)
     runs-on: ubuntu-latest

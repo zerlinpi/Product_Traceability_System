@@ -2,6 +2,18 @@
 
 这是一个完全独立的局域网仓库管理系统。程序、SQLite 数据库、导出文件和独立 Python 环境全部位于 `Product_Traceability_System` 目录内，不依赖也不修改 App、App 后端、管理后台或固件工程。
 
+> 📘 **使用与运维手册：[`docs/knowledge-base/`](docs/knowledge-base/README.md)**
+>
+> 从零教程、分角色 SOP、领星与扫码枪操作、库存与质量异常处理、备份恢复、
+> 故障排查、系统维护与开发者文档。**先看这里，比翻本文件更快。**
+>
+> | 我是… | 从这里开始 |
+> | --- | --- |
+> | 第一次用 | [快速开始](docs/knowledge-base/01-快速开始.md) |
+> | 仓管 / 运营 / 管理员 | [分角色 SOP](docs/knowledge-base/README.md#三按角色找入口) |
+> | 运维 | [系统维护](docs/knowledge-base/10-系统维护.md) |
+> | 开发者 | [开发者文档](docs/knowledge-base/11-开发者文档.md) |
+
 ## 快速开始（部署与各角色上手）
 
 ### 一、部署与初始化（管理员一次性完成）

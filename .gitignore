@@ -7,6 +7,11 @@ __pycache__/
 venv/
 .venv/
 
+# Node
+# Each package has its own .gitignore, but a new one that forgets it would drag
+# thousands of dependency files into `git add -A`. This is the backstop.
+node_modules/
+
 # Test run artifacts (temporary databases and screenshots produced by pytest)
 tests/.pytest-tmp*/
 .pytest-*.txt
