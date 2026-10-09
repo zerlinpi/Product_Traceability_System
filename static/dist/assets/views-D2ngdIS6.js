@@ -1,0 +1,1 @@
+import{On as e,b as t,k as n,mt as r}from"./runtime-core.esm-bundler-kJ0sRhYW.js";import{n as i}from"./auth-DGUZPJ_Z.js";var a={class:`p-10 text-center text-muted-foreground`},o={key:0},s={key:1},c=n({name:`Home`,__name:`index`,setup(n){let c=i();return(n,i)=>(r(),t(`div`,a,[e(c).isLogin?(r(),t(`p`,o,` 正在打开工作台… `)):(r(),t(`p`,s,` 请先登录 `))]))}});export{c as default};

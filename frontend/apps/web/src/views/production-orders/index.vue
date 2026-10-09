@@ -16,6 +16,7 @@ import operationsApi from '@/api/modules/operations'
 import { notifyError, notifySuccess } from '@/utils/feedback'
 import { formatDate, formatNumber, qualityStatus } from '@/utils/format'
 import ProductionQrDialog from './components/ProductionQrDialog.vue'
+import PtsListWindowNotice from '../../components/PtsListWindowNotice.vue'
 
 defineOptions({
   name: 'ProductionOrdersPage',
@@ -193,6 +194,7 @@ onMounted(loadProductionOrders)
     <FaPageHeader title="生产订单" description="流程第 1 步：勾选运营提交的采购单批量生成生产订单，每单生成唯一溯源码；也可标记为外采直接生成" />
 
     <FaPageMain title="待生成采购单">
+      <PtsListWindowNotice url="/api/production-orders" />
       <div class="pts-toolbar">
         <span id="pending-po-summary" class="pts-muted text-sm">{{ pendingSummary }}</span>
         <div class="flex flex-wrap gap-2">

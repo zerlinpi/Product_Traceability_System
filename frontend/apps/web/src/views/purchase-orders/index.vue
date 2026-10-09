@@ -22,6 +22,7 @@ import { confirmAction, notifyError, notifySuccess } from '@/utils/feedback'
 import { formatDate, formatNumber, syncStatus } from '@/utils/format'
 import FieldGrid from './components/FieldGrid.vue'
 import { defaultFieldValues, fieldsPayload, fieldValuesFromOrder, MORE_FIELDS, PO_NO_COLUMN, PRIMARY_FIELDS } from './template'
+import PtsListWindowNotice from '../../components/PtsListWindowNotice.vue'
 
 defineOptions({
   name: 'PurchaseOrdersPage',
@@ -356,6 +357,7 @@ onMounted(loadAll)
 
     <div ref="formSection" class="scroll-mt-4">
       <FaPageMain :title="formTitle">
+        <PtsListWindowNotice url="/api/purchase-orders" />
         <ElForm id="purchase-order-form" ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="submitPurchaseOrder">
           <div class="gap-x-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3">
             <ElFormItem label="关联产品" prop="productModelId">

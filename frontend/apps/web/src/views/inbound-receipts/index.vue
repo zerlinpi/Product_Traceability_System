@@ -11,6 +11,7 @@ import operationsApi from '@/api/modules/operations'
 import { notifyError, notifySuccess } from '@/utils/feedback'
 import { formatDate, formatNumber, syncStatus } from '@/utils/format'
 import PurchaseOrderSummary from './components/PurchaseOrderSummary.vue'
+import PtsListWindowNotice from '../../components/PtsListWindowNotice.vue'
 
 defineOptions({
   name: 'InboundReceiptsPage',
@@ -103,6 +104,7 @@ onMounted(loadInboundReceipts)
   <div class="pts-page">
     <FaPageHeader title="供应收货" description="针对采购订单登记供应到货，和成品扫码入库分别记账" />
     <FaPageMain title="登记供应收货">
+      <PtsListWindowNotice url="/api/inbound-receipts" />
       <ElForm id="inbound-receipt-form" ref="formRef" :model="form" :rules="rules" label-position="top" @submit.prevent="submitInboundReceipt">
         <div class="gap-x-5 grid grid-cols-1 md:grid-cols-2">
           <ElFormItem label="采购订单" prop="purchaseOrderId">

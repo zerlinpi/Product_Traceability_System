@@ -1,1 +1,0 @@
-import{n as e}from"./src-COOC-jpK.js";function t(){return e}export{t};

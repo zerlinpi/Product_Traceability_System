@@ -9,6 +9,7 @@ import { useDebounceFn } from '@vueuse/core'
 import batchesApi from '@/api/modules/batches'
 import { formatDate, qualityStatus } from '@/utils/format'
 import { notifyError } from '@/utils/feedback'
+import PtsListWindowNotice from '../../components/PtsListWindowNotice.vue'
 
 defineOptions({
   name: 'BatchQualityPage',
@@ -83,6 +84,7 @@ onMounted(load)
   <div class="pts-page">
     <FaPageHeader title="批次质量处理" description="流程第 3 步：对整批走步机执行合格放行或暂扣；仅待检记录可处理。暂扣批次不可入库" />
     <FaPageMain>
+      <PtsListWindowNotice url="/api/batch-trace-records" />
       <div class="pts-toolbar">
         <div class="pts-toolbar-filters">
           <ElInput id="batch-quality-code-filter" v-model="filters.batchCode" placeholder="按批次码筛选（完整码值）" clearable class="w-64" aria-label="批次码" />

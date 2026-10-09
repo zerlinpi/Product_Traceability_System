@@ -16,6 +16,7 @@
  */
 import type { AxiosRequestConfig, Method } from 'axios'
 import axios from 'axios'
+import { reactive } from 'vue'
 
 export class ApiError extends Error {
   readonly status: number
@@ -25,6 +26,43 @@ export class ApiError extends Error {
     this.name = 'ApiError'
     this.status = status
   }
+}
+
+/**
+ * What a list response said about the window it returned.
+ *
+ * The list endpoints answer with a plain array and put the counts in headers, so
+ * a caller that ignores them sees no difference from before — which is exactly
+ * how an operator ends up looking at "the records" when it is really the newest
+ * 500 of 30,000. `ListWindowNotice` reads this so the page can say so.
+ */
+export interface ListWindowInfo {
+  total: number
+  returned: number
+  limit: number
+}
+
+const listWindows = reactive<Record<string, ListWindowInfo>>({})
+
+function listWindowKey(url: string) {
+  return url.replace(/^\//, '')
+}
+
+function recordListWindow(url: string, headers: Record<string, unknown>) {
+  const total = headers['x-total-count']
+  if (total === undefined) {
+    return
+  }
+  listWindows[listWindowKey(url)] = {
+    total: Number(total),
+    returned: Number(headers['x-returned-count'] ?? 0),
+    limit: Number(headers['x-list-limit'] ?? 0),
+  }
+}
+
+/** The window the last response for this URL reported, if it reported one. */
+export function listWindowFor(url: string): ListWindowInfo | undefined {
+  return listWindows[listWindowKey(url)]
 }
 
 export interface RequestOptions {
@@ -163,6 +201,9 @@ export async function request<T = unknown>(method: Method, url: string, options:
   }
   if (idempotent) {
     clearIdempotencyKey(idempotent)
+  }
+  if (upperMethod === 'GET') {
+    recordListWindow(url, response.headers as Record<string, unknown>)
   }
   return (payload?.data ?? null) as T
 }

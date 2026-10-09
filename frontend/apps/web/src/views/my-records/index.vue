@@ -8,6 +8,7 @@ import type { AnyRecord } from '@/api/types'
 import batchesApi from '@/api/modules/batches'
 import { formatDate, qualityStatus } from '@/utils/format'
 import { notifyError } from '@/utils/feedback'
+import PtsListWindowNotice from '../../components/PtsListWindowNotice.vue'
 
 defineOptions({
   name: 'MyRecordsPage',
@@ -52,6 +53,7 @@ onMounted(load)
   <div class="pts-page">
     <FaPageHeader :title="title" :description="help" />
     <FaPageMain>
+      <PtsListWindowNotice url="/api/batch-trace-records" />
       <div class="pts-toolbar">
         <ElInput id="my-record-search" v-model="search" placeholder="搜索批次码或产品" clearable class="w-72" aria-label="搜索批次登记记录">
           <template #prefix>
