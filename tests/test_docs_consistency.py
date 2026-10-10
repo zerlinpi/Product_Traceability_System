@@ -306,6 +306,7 @@ def _fake_git(monkeypatch, tracked: str, deletions: dict[str, str]) -> None:
 
     def run(args, **_kwargs):
         if args[:2] == ["git", "ls-files"]:
+            assert "-z" in args, "必须以 -z 调用，否则非 ASCII 路径会被 git 转义成引号形式"
             return type("Result", (), {"returncode": 0, "stdout": tracked})()
         path = args[-1]
         found = deletions.get(path, "")
@@ -321,7 +322,7 @@ def test_reference_to_a_deleted_file_is_caught(monkeypatch):
     still read as current while every artefact it cited had been deleted.
     """
     _patch_read(monkeypatch, {"README.md": "参见 `static/app_v2.js`。"})
-    _fake_git(monkeypatch, "README.md\n", {"static/app_v2.js": "a019e61\n"})
+    _fake_git(monkeypatch, "README.md\0", {"static/app_v2.js": "a019e61\n"})
 
     checker.check_deleted_file_references()
 
@@ -338,7 +339,7 @@ def test_a_path_that_never_existed_is_not_reported(monkeypatch):
     writing the document.
     """
     _patch_read(monkeypatch, {"README.md": "`docs/NEVER_EXISTED.md` 尚未建立。"})
-    _fake_git(monkeypatch, "README.md\n", {})
+    _fake_git(monkeypatch, "README.md\0", {})
 
     checker.check_deleted_file_references()
 
@@ -354,7 +355,7 @@ def test_the_check_is_a_noop_when_history_is_unavailable(monkeypatch):
     comes from. Silence is the honest outcome; inventing a verdict would not be.
     """
     _patch_read(monkeypatch, {"README.md": "参见 `static/app_v2.js`。"})
-    _fake_git(monkeypatch, "README.md\n", {})
+    _fake_git(monkeypatch, "README.md\0", {})
 
     checker.check_deleted_file_references()
 
@@ -490,3 +491,23 @@ def test_the_repository_is_consistent():
     assert checker.main() == 0, (
         "文档与代码不一致：\n  " + "\n  ".join(checker.failures)
     )
+
+def test_non_ascii_paths_survive_the_listing(monkeypatch):
+    """Chinese filenames are the norm here, and git escapes them without -z.
+
+    ``git ls-files`` answers ``"docs/knowledge-base/01-\\345\\277\\253.md"`` for a
+    non-ASCII path unless ``-z`` is passed — quotes and octal escapes, which is no
+    longer a path. Every knowledge-base page was reported as missing until the
+    check asked for NUL-separated output.
+    """
+    _fake_git(monkeypatch, "docs/knowledge-base/快速开始.md\0", {})
+    monkeypatch.setattr(
+        checker,
+        "read",
+        lambda relative: "" if "\0" not in relative else "",
+    )
+
+    checker.check_deleted_file_references()
+
+    missing = [item for item in checker.failures if "文件不存在" in item]
+    assert not missing, f"中文路径被误判为不存在: {missing}"

@@ -311,7 +311,11 @@ def check_deleted_file_references() -> None:
     check after committing, or accept that CI reports it first.
     """
     listed = subprocess.run(
-        ["git", "ls-files", "*.md"],
+        # ``-z`` separates with NUL and never quotes. Without it git escapes any
+        # non-ASCII path — the knowledge base is full of Chinese filenames and they
+        # came back as "docs/knowledge-base/01-\345\277\253...", which is not a path
+        # any more, so every one of them was reported as missing.
+        ["git", "ls-files", "-z", "*.md"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -321,7 +325,9 @@ def check_deleted_file_references() -> None:
         fail("无法列出被跟踪的 markdown（需要在 git 工作区内运行）")
         return
 
-    for relative in listed.stdout.split():
+    for relative in listed.stdout.split("\0"):
+        if not relative:
+            continue
         if relative.startswith(_HISTORICAL_PREFIXES):
             continue
         text = read(relative)
