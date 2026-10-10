@@ -133,9 +133,19 @@
 }
 
 /* ---- scan pages ---------------------------------------------------------- */
+/*
+ * The scan pages are read standing up, on a tablet, often in daylight and
+ * sometimes through gloves. That makes the feedback block the most important
+ * text in the application, and it was set at body size (15px/13px) with 8%
+ * tinted backgrounds — legible at a desk, easy to miss on a shop floor.
+ *
+ * These sizes are deliberately larger than the rest of the interface. If you are
+ * tempted to bring them back in line for visual consistency, check them on a
+ * tablet at arm's length first.
+ */
 .pts-scan-box .el-input__wrapper {
-  min-height: 52px;
-  font-size: 18px;
+  min-height: 56px;
+  font-size: 19px;
 }
 
 .pts-scan-box .el-input__inner {
@@ -146,26 +156,30 @@
 .pts-scan-feedback {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 12px 14px;
+  gap: 6px;
+  padding: 16px 18px;
   margin-top: 14px;
-  border: 1px solid oklch(var(--border));
-  border-radius: 8px;
+  border: 1.5px solid oklch(var(--border));
+  border-radius: 10px;
   outline: none;
 }
 
 .pts-scan-feedback strong {
-  font-size: 15px;
+  font-size: 18px;
+  line-height: 1.35;
 }
 
 .pts-scan-feedback span {
-  font-size: 13px;
+  font-size: 15px;
+  line-height: 1.5;
   color: oklch(var(--muted-foreground));
 }
 
+/* The tint carries the result at a glance, so it has to survive a bright room:
+   8% was close to invisible on a tablet in daylight. */
 .pts-scan-feedback[data-tone="success"] {
-  background: oklch(0.53 0.14 149 / 8%);
-  border-color: oklch(0.53 0.14 149 / 45%);
+  background: oklch(0.53 0.14 149 / 14%);
+  border-color: oklch(0.53 0.14 149 / 55%);
 }
 
 .pts-scan-feedback[data-tone="success"] strong {
@@ -173,8 +187,8 @@
 }
 
 .pts-scan-feedback[data-tone="error"] {
-  background: oklch(0.577 0.245 27.325 / 7%);
-  border-color: oklch(0.577 0.245 27.325 / 45%);
+  background: oklch(0.577 0.245 27.325 / 12%);
+  border-color: oklch(0.577 0.245 27.325 / 55%);
 }
 
 .pts-scan-feedback[data-tone="error"] strong {
@@ -879,13 +893,14 @@
 }
 
 .pts-scan-edit-hint strong {
-  font-size: 13px;
+  font-size: 15px;
   color: oklch(var(--primary));
 }
 
 .pts-scan-edit-hint span {
-  margin-top: 3px;
-  font-size: 12px;
+  margin-top: 4px;
+  font-size: 14px;
+  line-height: 1.5;
   color: oklch(var(--muted-foreground));
 }
 
@@ -1054,6 +1069,25 @@
 }
 
 @media (max-width: 768px) {
+  /* Phones and the smaller shop-floor tablets: the scan box and its result get
+     another step up, because this is the screen people actually work from. */
+  .pts-scan-box .el-input__wrapper {
+    min-height: 64px;
+    font-size: 21px;
+  }
+
+  .pts-scan-feedback {
+    padding: 18px 20px;
+  }
+
+  .pts-scan-feedback strong {
+    font-size: 20px;
+  }
+
+  .pts-scan-feedback span {
+    font-size: 16px;
+  }
+
   .pts-component-row {
     grid-template-columns: minmax(0, 1fr);
   }
