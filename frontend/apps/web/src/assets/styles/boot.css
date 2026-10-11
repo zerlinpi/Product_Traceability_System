@@ -9,6 +9,12 @@ body {
   margin: 0;
 }
 
+/* Tells the browser this page handles both, so scrollbars and form controls are
+   drawn for the right one instead of defaulting to light. */
+html {
+  color-scheme: light dark;
+}
+
 .pts-boot {
   position: fixed;
   inset: 0;
@@ -20,6 +26,42 @@ body {
   font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
   color: #1f2937;
   background: #f5f6f7;
+}
+
+/*
+ * The splash paints before the app decides its colour scheme, and the app
+ * defaults to following the operating system (store/modules/app/settings.ts).
+ * Without a dark variant here, a dark-mode machine gets a full-screen white flash
+ * on every load — the one moment the theme is most obvious. Matched by media
+ * query so it works before any script runs, and by class so an explicit choice
+ * set earlier still wins.
+ */
+@media (prefers-color-scheme: dark) {
+  .pts-boot {
+    color: #e5e7eb;
+    background: #16181d;
+  }
+
+  .pts-boot-bar {
+    background: #2a2f37;
+  }
+
+  .pts-boot-hint {
+    color: #9ca3af;
+  }
+}
+
+.dark .pts-boot {
+  color: #e5e7eb;
+  background: #16181d;
+}
+
+.dark .pts-boot-bar {
+  background: #2a2f37;
+}
+
+.dark .pts-boot-hint {
+  color: #9ca3af;
 }
 
 .pts-boot-mark {
