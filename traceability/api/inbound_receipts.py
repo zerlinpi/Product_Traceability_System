@@ -200,10 +200,10 @@ def push_inbound_receipt(receipt_id: int):
         database.rollback()
         message = error.message if isinstance(error, LingxingError) else str(error)
         # Same reasoning as the purchase-order push: a timeout means the receipt
-        # may already exist in Lingxing. The status column's CHECK constraint
-        # allows only PENDING/PUSHED/FAILED, so the audit event and the message
-        # carry the distinction instead of the status.
+        # may already exist in Lingxing, so the status says NEEDS_REVIEW rather
+        # than FAILED and the message says what to do about it.
         uncertain = isinstance(error, LingxingError) and error.uncertain
+        status = "NEEDS_REVIEW" if uncertain else "FAILED"
         if uncertain:
             message = (
                 f"{message}｜结果未知：请求已发出但未收到回复，领星可能已经写入。"
@@ -214,10 +214,10 @@ def push_inbound_receipt(receipt_id: int):
         database.execute(
             """
             UPDATE inbound_receipts
-            SET sync_status = 'FAILED', push_in_progress = 0, push_error = ?
+            SET sync_status = ?, push_in_progress = 0, push_error = ?
             WHERE id = ?
             """,
-            (message, receipt_id),
+            (status, message, receipt_id),
         )
         record_audit_event(
             database,

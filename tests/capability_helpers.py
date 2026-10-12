@@ -13,9 +13,19 @@ PASSWORD = "RolePass@123"
 
 
 class FakeLingxingService:
-    def __init__(self, *, configured: bool = True, failures: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        configured: bool = True,
+        failures: set[str] | None = None,
+        uncertain: set[str] | None = None,
+    ) -> None:
         self.configured = configured
         self.failures = set(failures or ())
+        # Operations that time out — the request was sent and no reply came back.
+        # Kept apart from ``failures`` because the application must record this
+        # as 结果未知 (NEEDS_REVIEW), not as 推送失败.
+        self.uncertain = set(uncertain or ())
         self.calls: list[tuple[str, dict]] = []
         # Pending 收货单 rows returned by 查询收货单列表 (getOrderList), keyed by
         # nothing in particular — tests append via ``add_receipt``.
@@ -57,6 +67,8 @@ class FakeLingxingService:
 
     def push(self, operation: str, payload: dict) -> dict:
         self.calls.append((operation, payload))
+        if operation in self.uncertain:
+            raise LingxingError(f"mock {operation} timed out", uncertain=True)
         if operation in self.failures:
             raise LingxingError(f"mock {operation} failed")
         if operation in {"purchase_order", "inventory_sync"}:

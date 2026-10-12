@@ -315,7 +315,7 @@ def query_purchase_orders(
     parameters: list[Any] = []
     status = clean_text(sync_status, "同步状态", max_length=16).upper()
     if status:
-        if status not in {"PENDING", "PUSHED", "FAILED"}:
+        if status not in {"PENDING", "PUSHED", "FAILED", "NEEDS_REVIEW"}:
             raise ApiError("同步状态无效")
         clauses.append("po.sync_status = ?")
         parameters.append(status)
@@ -486,11 +486,11 @@ def push_purchase_order_record(
         message = error.message if isinstance(error, LingxingError) else str(error)
         # A timeout is not a failure: the request went out and no reply came back,
         # so Lingxing may have created the order. Recording it as a plain failure
-        # invites the operator to send it again and end up with two. The column's
-        # CHECK constraint allows only PENDING/PUSHED/FAILED, so the status stays
-        # FAILED and the distinction is carried by the audit event and by a
-        # message that says what to do about it.
+        # invites the operator to send it again and end up with two, so the status
+        # says NEEDS_REVIEW instead — the badge reads 结果未知 and the message says
+        # what to do about it.
         uncertain = isinstance(error, LingxingError) and error.uncertain
+        status = "NEEDS_REVIEW" if uncertain else "FAILED"
         if uncertain:
             message = (
                 f"{message}｜结果未知：请求已发出但未收到回复，领星可能已经写入。"
@@ -501,10 +501,10 @@ def push_purchase_order_record(
         database.execute(
             """
             UPDATE purchase_orders
-            SET sync_status = 'FAILED', push_in_progress = 0, push_error = ?
+            SET sync_status = ?, push_in_progress = 0, push_error = ?
             WHERE id = ?
             """,
-            (message, purchase_order_id),
+            (status, message, purchase_order_id),
         )
         record_audit_event(
             database,

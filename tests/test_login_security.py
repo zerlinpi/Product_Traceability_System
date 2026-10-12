@@ -574,7 +574,7 @@ def test_migration_v22_creates_the_attempt_table(app_and_path):
     _app, database_path = app_and_path
     connection = connect_database(database_path)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 22
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 23
         columns = {
             row[1] for row in connection.execute("PRAGMA table_info(login_attempts)").fetchall()
         }

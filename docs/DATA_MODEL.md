@@ -1,12 +1,12 @@
 # 数据模型（真实基线）
 
-> 基线：`user_version = 22`，共 **35 张业务表**。
+> 基线：`user_version = 23`，共 **35 张业务表**。
 > 本文档的表清单、主键与外键数量由实际 schema 提取，非手写规范。
 > 迁移实现见 `traceability/db.py`。
 
 ---
 
-## 1. 迁移链（v11 → v22）
+## 1. 迁移链（v11 → v23）
 
 迁移**只增不删**：不删除或重写历史二维码、标签、溯源记录。
 每个版本在一个 `BEGIN IMMEDIATE` 事务内完成，含 `PRAGMA user_version` 的写入，因此失败即整体回滚。
@@ -25,12 +25,14 @@
 | **v20** | `idempotency_keys` 表 + 状态/起始时间索引 | 纯增量（新表） |
 | **v21** | `audit_events` 加 `prev_hash` / `event_hash` + 只追加触发器 + 历史回填 | 纯增量（加列 + 触发器） |
 | **v22** | `login_attempts` 表 + 查询索引 | 纯增量（新表） |
+| **v23** | `purchase_orders` / `inbound_receipts` 重建：`sync_status` 增加 `NEEDS_REVIEW` | 重建（放宽 CHECK） |
 
 ### ⚠️ 当前部署状态
 
-`data/traceability.db` 实际为 **`user_version = 18`**，落后代码四个版本。
-下次启动将依次执行 v19、v20、v21、v22。四者均为纯增量（加列 + 新表 + 触发器），不影响既有数据。
-v21 会为既有审计记录**回填哈希链**，使其同样受完整性校验保护。
+`data/traceability.db` 实际为 **`user_version = 22`**，落后代码一个版本。
+下次启动将执行 v23：**重建** `purchase_orders` 与 `inbound_receipts`，把 `sync_status` 的
+CHECK 由三值放宽为四值（增加 `NEEDS_REVIEW`）。重建在同一 `BEGIN IMMEDIATE` 事务内完成，
+所有列与索引原样搬移，既有行不受影响；失败即整体回滚。
 
 ### 启动时附加动作
 
@@ -245,10 +247,16 @@ BEGIN SELECT RAISE(ABORT, 'audit_events 是只追加账本，不允许修改既�
 | --- | --- | --- |
 | `users.role` | `ADMIN` / `WAREHOUSE` / `OPERATIONS` | 表 CHECK + `auth.VALID_ROLES` |
 | `batch_trace_records.quality_status` | `ASSEMBLED` / `PASSED` / `HOLD` | 表 CHECK + `transition_batch_quality()` |
-| `purchase_orders.sync_status` | `PENDING` / `PUSHED` / `FAILED` | 表 CHECK |
+| `purchase_orders.sync_status` | `PENDING` / `PUSHED` / `FAILED` / `NEEDS_REVIEW` | 表 CHECK |
+| `inbound_receipts.sync_status` | `PENDING` / `PUSHED` / `FAILED` / `NEEDS_REVIEW` | 表 CHECK |
 | `product_stock_sync.sync_status` | `PENDING` / `PUSHED` / `FAILED` | 表 CHECK |
 | `production_orders.is_external` | `0` / `1` | 表 CHECK |
 | `supplier_inventory_movements.movement_type` | 入库 / 领用 / 调整 | 应用层 |
+
+> **`NEEDS_REVIEW`（v23）** 表示推送**结果未知**：请求已发出但未收到回复，领星可能已经写入。
+> 它与 `FAILED` 的关键区别是**不能直接重试**——重试可能产生重复单据。界面显示「结果未知」，
+> `push_error` 给出核对指引，审计事件为 `PO_PUSH_UNKNOWN` / `INBOUND_PUSH_UNKNOWN`。
+> 传输层用 `LingxingError.uncertain` 区分「超时（已发出）」与「连接失败（未发出）」。
 
 ### 质量状态转换（`transition_batch_quality()`，`traceability/api/batch_records.py`）
 

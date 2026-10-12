@@ -79,6 +79,10 @@ export function qualityStatus(status: unknown) {
 export const SYNC_STATUS: Record<string, { label: string, type: TagType }> = {
   PENDING: { label: '待推送', type: 'warning' },
   PUSHED: { label: '已推送', type: 'success' },
+  // A timeout is not a failure: the request went out and the reply never came,
+  // so Lingxing may already hold this order. Saying 推送失败 here would tell the
+  // operator to send it again, which is how one order becomes two.
+  NEEDS_REVIEW: { label: '结果未知', type: 'warning' },
   FAILED: { label: '推送失败', type: 'danger' },
 }
 
@@ -104,9 +108,11 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   PO_CREATED: '采购订单创建',
   PO_PUSHED: '采购订单已推送',
   PO_PUSH_FAILED: '采购订单推送失败',
+  PO_PUSH_UNKNOWN: '采购订单推送结果未知',
   INBOUND_RECEIVED: '供应收货登记',
   INBOUND_PUSHED: '供应收货已推送',
   INBOUND_PUSH_FAILED: '供应收货推送失败',
+  INBOUND_PUSH_UNKNOWN: '供应收货推送结果未知',
   PRODUCTION_ORDER_CREATED: '生产订单创建',
   FINISHED_GOODS_RECEIVED: '成品扫码入库',
   INVENTORY_SYNC_PUSHED: '库存同步成功',

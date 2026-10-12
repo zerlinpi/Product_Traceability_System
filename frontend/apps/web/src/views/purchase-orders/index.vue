@@ -122,9 +122,35 @@ function isPushed(order: AnyRecord) {
   return order.syncStatus === 'PUSHED'
 }
 
+/**
+ * A push that timed out has an unknown outcome: the request went out and the
+ * reply never came, so Lingxing may already hold this order. Pushing again
+ * without looking first is how one order becomes two, so the operator has to
+ * say they checked.
+ */
+async function confirmUnknownOutcome(record: AnyRecord) {
+  if (record.syncStatus !== 'NEEDS_REVIEW') {
+    return true
+  }
+  return confirmAction(
+    '上次推送的结果未知：请求已发出但没有收到回复，领星可能已经建单。\n\n'
+    + '请先在领星按单号核对，确认不存在后再推送——直接重推会产生重复单据。',
+    { title: '结果未知，确认重新推送？', confirmText: '我已核对，继续推送', danger: true },
+  )
+}
+
+/** The server's own wording is more precise than any fixed label here. */
+function pushErrorTitle(error: unknown, fallback: string) {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('结果未知') ? '推送结果未知，请先核对领星' : fallback
+}
+
 async function pushPurchaseOrder(order: AnyRecord) {
   const id = Number(order.id)
   if (pushingOrders.value.has(id)) {
+    return
+  }
+  if (!(await confirmUnknownOutcome(order))) {
     return
   }
   pushingOrders.value.add(id)
@@ -134,7 +160,7 @@ async function pushPurchaseOrder(order: AnyRecord) {
     notifySuccess('采购单已下单', result?.lingxingPoId ? `领星采购单号 ${result.lingxingPoId} 已转为待到货` : '领星同步完成')
   }
   catch (error) {
-    notifyError(error, '采购订单推送失败')
+    notifyError(error, pushErrorTitle(error, '采购订单推送失败'))
     // The server records the failure (推送失败 + reason): show it right away.
     loadPurchaseOrders()
   }
@@ -321,6 +347,9 @@ async function pushInboundReceipt(receipt: AnyRecord) {
   if (pushingReceipts.value.has(id)) {
     return
   }
+  if (!(await confirmUnknownOutcome(receipt))) {
+    return
+  }
   pushingReceipts.value.add(id)
   try {
     const result = await operationsApi.pushInboundReceipt(id)
@@ -328,7 +357,7 @@ async function pushInboundReceipt(receipt: AnyRecord) {
     notifySuccess('供应收货已推送', result?.lingxingInboundId || '领星入库同步完成')
   }
   catch (error) {
-    notifyError(error, '供应收货推送失败')
+    notifyError(error, pushErrorTitle(error, '供应收货推送失败'))
     // A failed push is recorded as 推送失败 on the receipt.
     loadInboundReceipts()
   }

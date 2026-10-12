@@ -20,7 +20,7 @@ from traceability.audit_chain import (
 # Exposed so maintenance tooling (manage.py, traceability.backup) and the startup
 # log can report "current vs target" without re-deriving it from the migration
 # chain.
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 
 SCHEMA = """
@@ -666,6 +666,131 @@ def _rebuild_purchase_orders_v15(connection: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_purchase_order_creator "
         "ON purchase_orders(created_by_user_id, created_at DESC)"
     )
+
+
+def _rebuild_purchase_orders_v23(connection: sqlite3.Connection) -> None:
+    """Widen ``purchase_orders.sync_status`` to admit 'NEEDS_REVIEW' (v23).
+
+    A Lingxing push that times out has an outcome nobody knows: the request was
+    sent and the reply never arrived, so the order may exist on the far side.
+    Recording that as 'FAILED' tells the operator to retry, and retrying is how
+    one purchase order becomes several. The status now carries that distinction
+    in its own value, which the list badge renders as 结果未知.
+
+    SQLite cannot alter a CHECK constraint, so the table is rebuilt.
+    Foreign-key enforcement is disabled by the caller while the stable name is
+    swapped; ``production_orders`` and ``inbound_receipts`` keep referencing
+    ``purchase_orders`` by the same name and id. Every column and index is
+    carried over verbatim — the CHECK is the only thing that changes.
+    """
+    connection.execute("DROP TABLE IF EXISTS purchase_orders_v23")
+    connection.execute(
+        """
+        CREATE TABLE purchase_orders_v23 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            po_no TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            supplier_id INTEGER REFERENCES suppliers(id) ON DELETE RESTRICT,
+            part_type_id INTEGER REFERENCES part_types(id) ON DELETE RESTRICT,
+            product_model_id INTEGER REFERENCES product_models(id) ON DELETE RESTRICT,
+            quantity INTEGER CHECK (quantity IS NULL OR quantity BETWEEN 1 AND 999999),
+            fields_json TEXT NOT NULL DEFAULT '{}',
+            sync_status TEXT NOT NULL DEFAULT 'PENDING'
+                CHECK (sync_status IN ('PENDING', 'PUSHED', 'FAILED', 'NEEDS_REVIEW')),
+            push_in_progress INTEGER NOT NULL DEFAULT 0 CHECK (push_in_progress IN (0, 1)),
+            lingxing_po_id TEXT NOT NULL DEFAULT '',
+            lingxing_raw_response TEXT NOT NULL DEFAULT '',
+            push_error TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_by_user_id INTEGER REFERENCES users(id) ON DELETE RESTRICT,
+            created_at TEXT NOT NULL,
+            pushed_at TEXT,
+            push_started_at TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO purchase_orders_v23(
+            id, po_no, supplier_id, part_type_id, product_model_id, quantity,
+            fields_json, sync_status, push_in_progress, lingxing_po_id,
+            lingxing_raw_response, push_error, created_by, created_by_user_id,
+            created_at, pushed_at, push_started_at
+        )
+        SELECT id, po_no, supplier_id, part_type_id, product_model_id, quantity,
+               fields_json, sync_status, push_in_progress, lingxing_po_id,
+               lingxing_raw_response, push_error, created_by, created_by_user_id,
+               created_at, pushed_at, push_started_at
+        FROM purchase_orders
+        """
+    )
+    connection.execute("DROP TABLE purchase_orders")
+    connection.execute("ALTER TABLE purchase_orders_v23 RENAME TO purchase_orders")
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS idx_purchase_order_sync "
+        "ON purchase_orders(sync_status, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_purchase_order_supplier "
+        "ON purchase_orders(supplier_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_purchase_order_creator "
+        "ON purchase_orders(created_by_user_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_purchase_order_product_model "
+        "ON purchase_orders(product_model_id)",
+    ):
+        connection.execute(statement)
+
+
+def _rebuild_inbound_receipts_v23(connection: sqlite3.Connection) -> None:
+    """The same widening for ``inbound_receipts.sync_status`` (v23).
+
+    Receipts are pushed to Lingxing over the same transport and fail the same
+    way, so a timeout there is equally ambiguous and equally must not be
+    presented as a plain failure. Rebuilt for the same reason and with the same
+    care as ``_rebuild_purchase_orders_v23``.
+    """
+    connection.execute("DROP TABLE IF EXISTS inbound_receipts_v23")
+    connection.execute(
+        """
+        CREATE TABLE inbound_receipts_v23 (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            purchase_order_id INTEGER NOT NULL
+                REFERENCES purchase_orders(id) ON DELETE RESTRICT,
+            quantity INTEGER NOT NULL CHECK (quantity BETWEEN 1 AND 999999),
+            receiver TEXT NOT NULL DEFAULT '',
+            receiver_user_id INTEGER REFERENCES users(id) ON DELETE RESTRICT,
+            received_at TEXT NOT NULL,
+            sync_status TEXT NOT NULL DEFAULT 'PENDING'
+                CHECK (sync_status IN ('PENDING', 'PUSHED', 'FAILED', 'NEEDS_REVIEW')),
+            push_in_progress INTEGER NOT NULL DEFAULT 0 CHECK (push_in_progress IN (0, 1)),
+            lingxing_inbound_id TEXT NOT NULL DEFAULT '',
+            lingxing_raw_response TEXT NOT NULL DEFAULT '',
+            push_error TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            pushed_at TEXT,
+            push_started_at TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO inbound_receipts_v23(
+            id, purchase_order_id, quantity, receiver, receiver_user_id,
+            received_at, sync_status, push_in_progress, lingxing_inbound_id,
+            lingxing_raw_response, push_error, created_at, pushed_at, push_started_at
+        )
+        SELECT id, purchase_order_id, quantity, receiver, receiver_user_id,
+               received_at, sync_status, push_in_progress, lingxing_inbound_id,
+               lingxing_raw_response, push_error, created_at, pushed_at, push_started_at
+        FROM inbound_receipts
+        """
+    )
+    connection.execute("DROP TABLE inbound_receipts")
+    connection.execute("ALTER TABLE inbound_receipts_v23 RENAME TO inbound_receipts")
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS idx_inbound_receipt_po "
+        "ON inbound_receipts(purchase_order_id, received_at DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_inbound_receipt_sync "
+        "ON inbound_receipts(sync_status, received_at DESC)",
+    ):
+        connection.execute(statement)
 
 
 def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -1411,6 +1536,33 @@ def initialize_database(app) -> None:
             except Exception:
                 connection.execute("ROLLBACK")
                 raise
+
+        # v23 widens ``sync_status`` on the two Lingxing push tables so that an
+        # ambiguous outcome has a value of its own. The transport already
+        # distinguishes "nothing was sent" from "sent, reply lost" — the second
+        # must not be recorded as a failure, because the operator reads that as
+        # an instruction to retry and a retry may create a duplicate order.
+        # SQLite cannot alter a CHECK, so both tables are rebuilt with every
+        # column and index carried across.
+        current_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if current_version < 23:
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                _rebuild_purchase_orders_v23(connection)
+                _rebuild_inbound_receipts_v23(connection)
+                connection.execute("PRAGMA user_version = 23")
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+            finally:
+                connection.execute("PRAGMA foreign_keys = ON")
+            violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise sqlite3.IntegrityError(
+                    f"v23 migration produced foreign-key violations: {violations!r}"
+                )
 
         _clear_abandoned_guards(connection)
         # A claim can only be held by a live request, so anything still
