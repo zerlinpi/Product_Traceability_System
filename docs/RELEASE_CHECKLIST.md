@@ -12,8 +12,9 @@ CI 每次 push 到 `main` 都会跑，红了就是没通过：
 | --- | --- |
 | Lint | `ruff check .` |
 | Permission matrix is in sync | `tools/extract_routes.py --check`——权限矩阵与代码一致 |
-| Docs match the code | `tools/check_docs_consistency.py`——文档描述的是当前系统 |
+| Docs match the code | `tools/check_docs_consistency.py`——文档描述的是当前系统；`tools/check_knowledge_base.py`——知识库链接完整、无孤立页面 |
 | Frontend | `pnpm typecheck`、`pnpm build`、**已提交 bundle 与源码指纹一致**、浏览器 smoke E2E |
+| Business acceptance (scenarios A-J) | `tools/acceptance.py`——一个产品从供应商来料走到合格入库，端到端数字仍对得上 |
 | Test (ubuntu / windows) | 测试数量守卫（`tools/check_test_count.py`）+ 全量 pytest + coverage 门槛 |
 | （pytest 内） | `python tools/check_frontend_build.py` 的指纹校验、审计链与权限矩阵的回归测试 |
 
@@ -23,8 +24,10 @@ CI 每次 push 到 `main` 都会跑，红了就是没通过：
 
 ## 1. 代码与 CI
 
-- [ ] `main` 上的最新 commit 的 CI **六项全绿**（不是「大部分绿」）
+- [ ] `main` 上的最新 commit 的 CI **七项全绿**（不是「大部分绿」）
 - [ ] 本次改动**没有降低** `coverage --cov-fail-under` 的门槛
+      （`pyproject.toml` 的 `[tool.coverage.run] omit` 也一样：把某类代码移出分母
+      而不把它交给别的作业跑，就是降低门槛）
 - [ ] 本次改动**没有降低** `tests/BASELINE_COUNT`
       （降了就说明删了测试，要么补回来，要么在提交信息里说明为什么这个测试已失效）
 - [ ] 提交信息说清了「改了什么、为什么」，不是 `update` / `fix`

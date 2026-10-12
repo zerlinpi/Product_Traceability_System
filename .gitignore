@@ -23,6 +23,8 @@ tests/.pytest-tmp*/
 coverage.xml
 htmlcov/
 pytest-report.xml
+.pytest-full.xml
+.pytest-full.txt
 
 # Runtime data and backups
 data/*.db

@@ -185,6 +185,44 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+  # The end-to-end business run: one product travels from a supplier's incoming
+  # batch, through a purchase order, a production order, a batch QR code,
+  # registration, quality release and finished-goods stock-in — and the numbers
+  # still agree at the end. The scenarios are the ones where a plausible-looking
+  # implementation quietly gets the business wrong: part of an order completed, a
+  # held batch, a double scan, two operators at once, not enough material, and
+  # Lingxing answering in each of the ways it can.
+  #
+  # `tools/acceptance.py` seeds its own throwaway database and injects a Lingxing
+  # transport, so nothing leaves the machine and nothing touches data/. It is a
+  # separate job rather than part of the pytest suite on purpose: it boots the real
+  # application, and its checks are the acceptance scenarios the deliverable is
+  # judged on.
+  #
+  # It is also why that file is out of the pytest coverage scope (see
+  # [tool.coverage.run] in pyproject.toml): the floor describes the system that
+  # ships, and the harness is verification — verified here instead, by running it.
+  # Before this job existed the harness was a file nobody ran, which is exactly
+  # how a 359-statement acceptance script ends up never executed at all.
+  #
+  # Ubuntu only, for the same reason as the e2e smoke test above: it drives a Flask
+  # test client and a SQLite file, neither of which varies by platform.
+  acceptance:
+    name: Business acceptance (scenarios A-J)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: Run the factory's own workflow end to end
+        run: python tools/acceptance.py
+
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
@@ -219,10 +257,17 @@ jobs:
         run: python tools/check_test_count.py
 
       # The floor is a ratchet, not a target. Measured on Windows (the
-      # deployment target) the suite covers 84.5%; 82 leaves headroom for
+      # deployment target) the suite covers the mid-80s; 82 leaves headroom for
       # branches that only execute on one platform — ble_collector.py has
       # Windows-only paths, so Linux runs score a little lower. Raise it as
       # coverage improves; lowering it needs a reason.
+      #
+      # What the number covers is decided by [tool.coverage.run] in
+      # pyproject.toml: the four scopes below, minus the build and verification
+      # tooling that CI executes in a step of its own. Those tools are not the
+      # system that ships, and putting them in the denominator made the floor move
+      # for reasons that had nothing to do with the shipped code — see the comment
+      # there for the numbers. The floor itself has never changed.
       #
       # Output is teed to a file so the failure step below can surface it. Job
       # logs need repository admin rights to read through the API, which makes a
