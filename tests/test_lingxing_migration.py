@@ -79,7 +79,7 @@ def test_real_v12_database_migrates_through_v13_without_losing_history(tmp_path)
 
     connection = db_module.connect_database(database_path)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 23
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 24
         assert table_names(connection) >= V13_TABLES | V14_TABLES
         assert [tuple(row) for row in connection.execute("SELECT * FROM product_models")] == before_products
         migrated = connection.execute(

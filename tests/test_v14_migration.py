@@ -17,7 +17,7 @@ def test_real_v13_database_converges_roles_and_adds_v14_tables(tmp_path):
 
     connection = db_module.connect_database(database_path)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 23
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 24
         assert table_names(connection) >= V14_TABLES
         assert connection.execute(
             "SELECT role FROM users WHERE username='legacy.operator'"

@@ -175,9 +175,16 @@ def sync_inventory_to_lingxing():
     except Exception as error:
         message = error.message if isinstance(error, (ApiError, LingxingError)) else str(error)
         finished_at = current_app.config["NOW_PROVIDER"]()
+        # A timeout here means the pending-收货单 query itself is unknown, so
+        # nothing is known about any product — including whether it should be
+        # retried. An uncertain verdict marks the status so the operator looks
+        # before syncing again.
+        uncertain = isinstance(error, LingxingError) and error.uncertain
         database.execute("BEGIN IMMEDIATE")
         for product_model_id in scope_ids:
-            mark_product_stock_sync_failed(database, product_model_id, message, finished_at)
+            mark_product_stock_sync_failed(
+                database, product_model_id, message, finished_at, uncertain=uncertain
+            )
         database.commit()
         release_guard("FAILED", message, [])
         if isinstance(error, (ApiError, LingxingError)):
@@ -211,14 +218,25 @@ def sync_inventory_to_lingxing():
                     }
                 )
             except (ApiError, LingxingError) as error:
+                uncertain = isinstance(error, LingxingError) and error.uncertain
+                message = (
+                    "结果未知："
+                    f"{error.message}。请先在领星按 SKU 核对该收货单是否已快捷入库，再决定是否重新同步。"
+                    if uncertain
+                    else error.message
+                )
                 mark_product_stock_sync_failed(
-                    database, row["product_model_id"], error.message, finished_at
+                    database,
+                    row["product_model_id"],
+                    message,
+                    finished_at,
+                    uncertain=uncertain,
                 )
                 results.append(
                     {
                         "productModelId": row["product_model_id"],
-                        "status": "FAILED",
-                        "message": error.message,
+                        "status": "NEEDS_REVIEW" if uncertain else "FAILED",
+                        "message": message,
                     }
                 )
         database.commit()
@@ -227,7 +245,13 @@ def sync_inventory_to_lingxing():
         release_guard("FAILED", "库存同步异常", results)
         raise
 
-    failed = [item for item in results if item["status"] == "FAILED"]
+    # NEEDS_REVIEW counts as not-succeeded for the guard and for the summary: the
+    # product was not synced either way, and the operator's next action is the
+    # message. Excluding it here made a scope that was entirely NEEDS_REVIEW fall
+    # through to "没有可同步的收货单" — a message that sends the operator looking
+    # for a missing 收货单 when the real answer is that one timed out and needs
+    # checking in Lingxing first.
+    failed = [item for item in results if item["status"] in ("FAILED", "NEEDS_REVIEW")]
     if succeeded == 0:
         # Nothing was received (every scoped product failed) — surface the
         # first reason and leave local stock untouched.

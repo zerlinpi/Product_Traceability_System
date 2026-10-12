@@ -21,7 +21,7 @@ from traceability.audit_chain import (
 # Exposed so maintenance tooling (manage.py, traceability.backup) and the startup
 # log can report "current vs target" without re-deriving it from the migration
 # chain.
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 
 SCHEMA = """
@@ -792,6 +792,48 @@ def _rebuild_inbound_receipts_v23(connection: sqlite3.Connection) -> None:
         "ON inbound_receipts(sync_status, received_at DESC)",
     ):
         connection.execute(statement)
+
+
+def _rebuild_product_stock_sync_v24(connection: sqlite3.Connection) -> None:
+    """Widen ``product_stock_sync.sync_status`` with ``NEEDS_REVIEW`` (v24).
+
+    Same reason and same care as the v23 pair: SQLite cannot alter a CHECK, so the
+    table is rebuilt with every column carried across and the existing rows copied
+    unchanged. There are no secondary indexes to recreate — the primary key is the
+    only one, and it travels with the table definition.
+
+    The safety-copy the operations screen reads is on purpose: a failed
+    fast-receive used to be indistinguishable from one that timed out, and the
+    operator's only available action after a failure is to run the sync again.
+    """
+    connection.execute("DROP TABLE IF EXISTS product_stock_sync_v24")
+    connection.execute(
+        """
+        CREATE TABLE product_stock_sync_v24 (
+            product_model_id INTEGER PRIMARY KEY
+                REFERENCES product_models(id) ON DELETE CASCADE,
+            sync_status TEXT NOT NULL DEFAULT 'PENDING'
+                CHECK (sync_status IN ('PENDING', 'PUSHED', 'FAILED', 'NEEDS_REVIEW')),
+            synced_quantity INTEGER NOT NULL DEFAULT 0,
+            lingxing_id TEXT NOT NULL DEFAULT '',
+            push_error TEXT NOT NULL DEFAULT '',
+            synced_at TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO product_stock_sync_v24(
+            product_model_id, sync_status, synced_quantity, lingxing_id,
+            push_error, synced_at
+        )
+        SELECT product_model_id, sync_status, synced_quantity, lingxing_id,
+               push_error, synced_at
+        FROM product_stock_sync
+        """
+    )
+    connection.execute("DROP TABLE product_stock_sync")
+    connection.execute("ALTER TABLE product_stock_sync_v24 RENAME TO product_stock_sync")
 
 
 def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -1658,6 +1700,38 @@ def initialize_database(app) -> None:
             if violations:
                 raise sqlite3.IntegrityError(
                     f"v23 migration produced foreign-key violations: {violations!r}"
+                )
+
+        # v24 adds the same fourth value to ``product_stock_sync.sync_status``.
+        #
+        # The inventory sync fast-receives every pending 收货单 for a product's
+        # SKU, one call per 收货单. A timeout on that call leaves the outcome
+        # unknown, and ``mark_product_stock_sync_failed`` used to write it as
+        # FAILED — which the operations screen reads as "sync it again". Whether
+        # a retry is safe depends on Lingxing having already made that 收货单
+        # non-pending, which is exactly what the lost reply would have told us.
+        # So an unknown outcome gets its own value, the same way the two push
+        # tables got one in v23.
+        #
+        # Six columns, no indexes beyond the primary key — the rebuild carries
+        # every row across unchanged; the CHECK is the only difference.
+        current_version = connection.execute("PRAGMA user_version").fetchone()[0]
+        if current_version < 24:
+            connection.execute("PRAGMA foreign_keys = OFF")
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                _rebuild_product_stock_sync_v24(connection)
+                connection.execute("PRAGMA user_version = 24")
+                connection.execute("COMMIT")
+            except Exception:
+                connection.execute("ROLLBACK")
+                raise
+            finally:
+                connection.execute("PRAGMA foreign_keys = ON")
+            violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise sqlite3.IntegrityError(
+                    f"v24 migration produced foreign-key violations: {violations!r}"
                 )
 
         _clear_abandoned_guards(connection)

@@ -173,21 +173,34 @@ def mark_product_stock_sync_failed(
     product_model_id: int,
     message: str,
     timestamp: str,
+    *,
+    uncertain: bool = False,
 ) -> None:
-    # Preserve the last successful synced_quantity / lingxing_id on conflict;
-    # only the status, error and time are refreshed for a failed push.
+    """Record a failed inventory sync, or an unknown one.
+
+    ``uncertain`` is the transport telling us the request went out and no reply
+    came back, so Lingxing may already have fast-received those 收货单. The status
+    written then is ``NEEDS_REVIEW`` rather than ``FAILED``, and the only action
+    either screen offers after a failure is to sync again — which is safe when the
+    request never left and unsafe when it did, because a second fast-receive of a
+    收货单 that was already received is exactly the duplicate it looks like.
+
+    The last successful ``synced_quantity`` / ``lingxing_id`` are preserved on
+    conflict: only the status, error and time are refreshed.
+    """
+    status = "NEEDS_REVIEW" if uncertain else "FAILED"
     database.execute(
         """
         INSERT INTO product_stock_sync(
             product_model_id, sync_status, synced_quantity, lingxing_id,
             push_error, synced_at
-        ) VALUES (?, 'FAILED', 0, '', ?, ?)
+        ) VALUES (?, ?, 0, '', ?, ?)
         ON CONFLICT(product_model_id) DO UPDATE SET
-            sync_status = 'FAILED',
+            sync_status = excluded.sync_status,
             push_error = excluded.push_error,
             synced_at = excluded.synced_at
         """,
-        (product_model_id, message, timestamp),
+        (product_model_id, status, message, timestamp),
     )
 
 

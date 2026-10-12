@@ -324,7 +324,7 @@ def test_insert_is_still_allowed(database):
 def test_migration_v21_adds_the_columns(database_path_of):
     connection = connect_database(database_path_of)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 23
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 24
         columns = {
             row[1] for row in connection.execute("PRAGMA table_info(audit_events)").fetchall()
         }
@@ -365,7 +365,7 @@ def test_migration_backfills_pre_existing_rows(tmp_path):
 
     connection = connect_database(database_path)
     try:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 23
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 24
         report = verify_chain(connection)
         assert report.total == 3
         assert report.unhashed == 0, "the backfill did not cover the legacy rows"
