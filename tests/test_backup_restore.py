@@ -324,6 +324,16 @@ def test_restore_clears_stale_wal_and_shm_sidecars(tmp_path, live):
     that the files are absent.
     """
     report = create_backup(live, tmp_path / "bk", created_at=FIXED_NOW)
+
+    # Planting stale content means opening the sidecars for writing, which is only
+    # possible once the app has let go of the database — the same "stop the
+    # service first" an operator performs. Without the WAL holder the app's own
+    # connection would have been enough to block this on Windows; now the holder
+    # does it, which is the more honest failure because it cannot be ignored.
+    from traceability.db import release_wal_holder
+
+    release_wal_holder(live)
+
     marker = b"STALE-SIDECAR-MARKER"
     for suffix in ("-wal", "-shm"):
         Path(str(live) + suffix).write_bytes(marker * 64)

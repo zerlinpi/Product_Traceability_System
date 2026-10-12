@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -823,6 +824,101 @@ def close_db(_error: BaseException | None = None) -> None:
         database.close()
 
 
+#: One deliberately idle connection per database file, held open for the life of
+#: the process. See :func:`hold_wal_shared_memory`.
+_WAL_HOLDERS: dict[str, sqlite3.Connection] = {}
+
+
+def hold_wal_shared_memory(path: str | Path) -> None:
+    """Keep the WAL shared-memory file alive, so no request ever has to create it.
+
+    Why this exists
+    ---------------
+    ``get_db`` opens a connection per request and ``close_db`` closes it when the
+    request ends, so the connection count drops to zero between requests. In WAL
+    mode the closing of the *last* connection checkpoints the log and deletes both
+    ``-wal`` and ``-shm``. The next request therefore opens a WAL database whose
+    ``-shm`` does not exist yet and has to create it.
+
+    SQLite serialises that creation with a lock, and on Windows a second opener
+    that arrives while the first is still creating the file does not wait: it falls
+    back to a **read-only** view of the shared memory and stays there for the life
+    of that connection. Reads keep working, so nothing notices until the first
+    write, which fails with::
+
+        sqlite3.OperationalError: attempt to write a readonly database
+
+    That is not a busy timeout — ``busy_timeout`` does not cover it, and neither
+    does retrying the write on the same connection, because the connection is the
+    thing that is degraded. The only remedy is to close and reopen.
+
+    The window is tiny and needs the server to have been idle, which is why this
+    was never seen in the field: two requests must open within roughly five
+    milliseconds of each other, with no other connection open. It *was* seen in
+    ``test_batch_concurrency``, which fires a pool of workers at a freshly seeded
+    database and so reproduces it on every run — the same race a shop floor would
+    eventually produce, on a server that had gone quiet at lunch and then had two
+    operators scan at the same moment.
+
+    What is excluded, and why
+    -------------------------
+    Probing on every connection is not an option: a ``BEGIN IMMEDIATE`` at connect
+    time turns a read-only request into a WAL write, and the checkpoint on close
+    then makes it ~48 ms per connection instead of ~0.35 ms (measured). Turning WAL
+    off would also work but gives up readers-do-not-block-writers and
+    ``synchronous = NORMAL`` for a mode this deployment does not need.
+
+    So the shared-memory file is simply kept in existence. One idle connection,
+    holding no transaction, is enough: it never takes a read snapshot, so
+    checkpointing still runs on every commit.
+
+    Production and tests differ only in who closes it. The server keeps it until
+    the process exits. The suite creates an app per test, so it calls
+    :func:`release_wal_holders` from an autouse fixture rather than accumulating
+    one open handle per test database.
+    """
+    key = str(Path(path).resolve())
+    if key in _WAL_HOLDERS:
+        return
+    connection = connect_database(path)
+    # A read is enough to make SQLite materialise the -shm. The connection is
+    # then left idle — no transaction open, so it holds no read snapshot and does
+    # not block checkpointing.
+    connection.execute("SELECT 1").fetchone()
+    _WAL_HOLDERS[key] = connection
+
+
+def release_wal_holders() -> None:
+    """Close every held connection. The test suite calls this after each test."""
+    while _WAL_HOLDERS:
+        _key, connection = _WAL_HOLDERS.popitem()
+        # An idle handle does not fail to close, but a suite that runs for an hour
+        # should not stop because one did.
+        with contextlib.suppress(sqlite3.Error):
+            connection.close()
+
+
+def release_wal_holder(path: str | Path) -> None:
+    """Close the held connection for one database file, if there is one.
+
+    The counterpart the restore path uses: it replaces the database file and
+    deletes the ``-wal``/``-shm`` sidecars beside it, which on Windows cannot be
+    done while a handle is open. ``restore_backup`` calls this for the file it is
+    about to replace and re-acquires afterwards, so the guarantee survives a
+    restore performed inside a running process — which is what the test suite
+    does, and what ``verify-backup``/``restore-backup`` on the command line does
+    while the server is being brought down.
+
+    Releasing one path rather than everything keeps the blast radius at the file
+    being replaced: other databases keep their guarantee untouched.
+    """
+    key = str(Path(path).resolve())
+    connection = _WAL_HOLDERS.pop(key, None)
+    if connection is not None:
+        with contextlib.suppress(sqlite3.Error):
+            connection.close()
+
+
 def initialize_database(app) -> None:
     database_path = Path(app.config["DATABASE"])
     database_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1570,6 +1666,10 @@ def initialize_database(app) -> None:
         _clear_abandoned_idempotency_claims(connection)
     finally:
         connection.close()
+
+    # Opened after the schema work, so it shares a file that is already in WAL
+    # mode. See hold_wal_shared_memory for the race this prevents.
+    hold_wal_shared_memory(database_path)
 
     app.teardown_appcontext(close_db)
 

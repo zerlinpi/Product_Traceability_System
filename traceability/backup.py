@@ -168,6 +168,38 @@ def open_read_only(path: str | Path) -> sqlite3.Connection:
 _read_only = open_read_only
 
 
+def _checkpoint(path: str | Path) -> None:
+    """Fold the write-ahead log into the main database file.
+
+    A file copy of a WAL database only carries what has already been checkpointed,
+    so anything still in ``-wal`` would be missing from the copy — the safety copy
+    would quietly look like the last few writes never happened.
+
+    This used to be invisible. The last connection closing a WAL database runs a
+    checkpoint itself, so a file copied after the service stopped was complete.
+    It stops being true the moment anything else holds the database open: the
+    WAL holder that keeps the shared-memory file alive between requests, or a
+    reader on another machine. In both cases the writes are durable — they are in
+    the log, and committing means they survived — but a plain copy would not see
+    them.
+
+    ``TRUNCATE`` rather than the default ``PASSIVE`` because a partial checkpoint
+    would leave exactly the situation this exists to prevent, and a busy result is
+    reported rather than ignored: an incomplete safety copy is worse than no
+    restore at all.
+    """
+    connection = sqlite3.connect(str(path), timeout=10)
+    try:
+        row = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    finally:
+        connection.close()
+    if row is not None and row[0]:
+        raise BackupError(
+            f"无法在复制前归档 {path} 的预写日志（有其它连接正在读取），已中止恢复。"
+            "请先停止正在使用该数据库的服务。"
+        )
+
+
 def integrity_check(path: str | Path) -> str:
     """Return ``'ok'`` or a description of the first problem found.
 
@@ -644,16 +676,27 @@ def restore_backup(
     target.parent.mkdir(parents=True, exist_ok=True)
     check_disk_space(target.parent, required_bytes=source.stat().st_size * 2 + 8 * 1024 * 1024)
 
+    # The WAL holder is dropped before anything touches the file or its sidecars,
+    # and taken back at the very end. It exists so a WAL database's shared-memory
+    # file is never missing between requests — but it is an open handle on exactly
+    # this file and on the sidecars, and a WAL connection holds both even when it
+    # only reads. Windows refuses the replace and the deletes while those handles
+    # are open. This is the requirement the docstring already states ("stop the
+    # service first"), enforced here instead of left to the operator: a restore
+    # run against a server that is still up now fails loudly rather than silently
+    # leaving the old file in place.
+    from traceability.db import hold_wal_shared_memory, release_wal_holder
+
+    release_wal_holder(target)
+
     safety_copy: Path | None = None
     if target.exists() and keep_safety_copy:
+        _checkpoint(target)
         directory = Path(safety_dir) if safety_dir else target.parent
         directory.mkdir(parents=True, exist_ok=True)
         stamp = created_at.replace(":", "").replace("-", "").replace("+", "_")
         safety_copy = directory / f"{target.stem}_pre-restore_{stamp}{target.suffix}"
         shutil.copy2(target, safety_copy)
-
-    # Write through a temporary file, then replace atomically, so an interrupted
-    # restore cannot leave a half-written database in place.
     temporary = target.with_name(target.name + ".restore-tmp")
     try:
         shutil.copy2(source, temporary)
@@ -668,6 +711,10 @@ def restore_backup(
         sidecar = Path(str(target) + suffix)
         if sidecar.exists():
             sidecar.unlink()
+
+    # Re-acquired only once the file and its sidecars are this process's alone
+    # again, so the next request still gets the guarantee.
+    hold_wal_shared_memory(target)
 
     integrity = integrity_check(target)
     if integrity != "ok":
