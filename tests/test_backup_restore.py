@@ -48,6 +48,60 @@ from traceability.backup import (  # noqa: E402
 FIXED_NOW = "2026-07-22T10:30:00+08:00"
 
 
+def test_a_failed_restore_leaves_the_wal_holder_in_place(tmp_path, live, monkeypatch):
+    """A restore that dies partway must not cost the server its WAL guarantee.
+
+    restore_backup drops the database's WAL holder so it can replace the file, and
+    re-acquires it in a finally. That finally has to cover *every* exit: a full
+    disk during the copy, a sidecar that will not delete. If it only covered the
+    happy path, a failed restore would leave the server without the holder and the
+    next two requests after the failure would be back to racing for the
+    shared-memory file the holder exists to keep — a failure that makes the next
+    failure more likely.
+    """
+    from traceability.db import _WAL_HOLDERS, hold_wal_shared_memory
+
+    hold_wal_shared_memory(live)
+    report = create_backup(live, tmp_path / "bk", created_at=FIXED_NOW)
+
+    def explode(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(backup_module.os, "replace", explode)
+
+    with pytest.raises(OSError, match="disk full"):
+        restore_backup(report.path, live, created_at=FIXED_NOW, keep_safety_copy=False)
+
+    assert str(live.resolve()) in _WAL_HOLDERS, (
+        "the holder was not re-acquired after a failed restore — the server is "
+        "now running without it"
+    )
+    # No restore debris left behind either.
+    assert not list(live.parent.glob("*restore-tmp"))
+
+
+def test_a_restore_refuses_when_the_log_cannot_be_archived(tmp_path, live, monkeypatch):
+    """An incomplete safety copy is worse than no restore at all.
+
+    shutil.copy2 only carries what has been checkpointed into the main file, so
+    restore_backup checkpoints first and treats a busy result as a refusal. A
+    safety copy missing the last few writes looks exactly like a database where
+    those writes never happened, and it is what an operator restores *from* after
+    a failed upgrade.
+    """
+    report = create_backup(live, tmp_path / "bk", created_at=FIXED_NOW)
+    monkeypatch.setattr(
+        backup_module,
+        "_checkpoint",
+        lambda *_a, **_k: (_ for _ in ()).throw(backup_module.BackupError("busy")),
+    )
+
+    with pytest.raises(BackupError):
+        restore_backup(report.path, live, created_at=FIXED_NOW)
+
+    assert list_backups(tmp_path / "bk"), "the backup itself must survive a refused restore"
+
+
 @pytest.fixture()
 def live(tmp_path):
     """A migrated database with a little data in it."""

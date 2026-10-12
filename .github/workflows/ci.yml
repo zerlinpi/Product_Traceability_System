@@ -257,7 +257,7 @@ jobs:
         run: python tools/check_test_count.py
 
       # The floor is a ratchet, not a target. Measured on Windows (the
-      # deployment target) the suite covers the mid-80s; 82 leaves headroom for
+      # deployment target) the suite covers 86%; 82 leaves headroom for
       # branches that only execute on one platform — ble_collector.py has
       # Windows-only paths, so Linux runs score a little lower. Raise it as
       # coverage improves; lowering it needs a reason.

@@ -677,44 +677,51 @@ def restore_backup(
     check_disk_space(target.parent, required_bytes=source.stat().st_size * 2 + 8 * 1024 * 1024)
 
     # The WAL holder is dropped before anything touches the file or its sidecars,
-    # and taken back at the very end. It exists so a WAL database's shared-memory
-    # file is never missing between requests — but it is an open handle on exactly
-    # this file and on the sidecars, and a WAL connection holds both even when it
-    # only reads. Windows refuses the replace and the deletes while those handles
-    # are open. This is the requirement the docstring already states ("stop the
-    # service first"), enforced here instead of left to the operator: a restore
-    # run against a server that is still up now fails loudly rather than silently
-    # leaving the old file in place.
+    # and taken back in the finally below. It exists so a WAL database's
+    # shared-memory file is never missing between requests — but it is an open
+    # handle on exactly this file and on the sidecars, and a WAL connection holds
+    # both even when it only reads. Windows refuses the replace and the deletes
+    # while those handles are open. This is the requirement the docstring already
+    # states ("stop the service first"), enforced here instead of left to the
+    # operator: a restore run against a server that is still up now fails loudly
+    # rather than silently leaving the old file in place.
+    #
+    # The finally covers every exit, not just the successful one. A restore that
+    # dies partway — a full disk during the copy, a sidecar that will not delete —
+    # must leave the server exactly as it found it, or the next two requests after
+    # the failure are back to racing for the shared-memory file the holder exists
+    # to keep.
     from traceability.db import hold_wal_shared_memory, release_wal_holder
 
     release_wal_holder(target)
-
-    safety_copy: Path | None = None
-    if target.exists() and keep_safety_copy:
-        _checkpoint(target)
-        directory = Path(safety_dir) if safety_dir else target.parent
-        directory.mkdir(parents=True, exist_ok=True)
-        stamp = created_at.replace(":", "").replace("-", "").replace("+", "_")
-        safety_copy = directory / f"{target.stem}_pre-restore_{stamp}{target.suffix}"
-        shutil.copy2(target, safety_copy)
-    temporary = target.with_name(target.name + ".restore-tmp")
     try:
-        shutil.copy2(source, temporary)
-        os.replace(temporary, target)
+        safety_copy: Path | None = None
+        if target.exists() and keep_safety_copy:
+            _checkpoint(target)
+            directory = Path(safety_dir) if safety_dir else target.parent
+            directory.mkdir(parents=True, exist_ok=True)
+            stamp = created_at.replace(":", "").replace("-", "").replace("+", "_")
+            safety_copy = directory / f"{target.stem}_pre-restore_{stamp}{target.suffix}"
+            shutil.copy2(target, safety_copy)
+
+        # Write through a temporary file, then replace atomically, so an
+        # interrupted restore cannot leave a half-written database in place.
+        temporary = target.with_name(target.name + ".restore-tmp")
+        try:
+            shutil.copy2(source, temporary)
+            os.replace(temporary, target)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+
+        # Stale sidecars would otherwise be replayed onto the restored file and
+        # corrupt it.
+        for suffix in ("-wal", "-shm"):
+            sidecar = Path(str(target) + suffix)
+            if sidecar.exists():
+                sidecar.unlink()
     finally:
-        if temporary.exists():
-            temporary.unlink()
-
-    # Stale sidecars would otherwise be replayed onto the restored file and
-    # corrupt it.
-    for suffix in ("-wal", "-shm"):
-        sidecar = Path(str(target) + suffix)
-        if sidecar.exists():
-            sidecar.unlink()
-
-    # Re-acquired only once the file and its sidecars are this process's alone
-    # again, so the next request still gets the guarantee.
-    hold_wal_shared_memory(target)
+        hold_wal_shared_memory(target)
 
     integrity = integrity_check(target)
     if integrity != "ok":
