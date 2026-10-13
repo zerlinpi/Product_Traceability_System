@@ -557,7 +557,24 @@ def initialize_auth(app: Flask) -> None:
     def logout():
         user = current_user()
         if user and not app.config["AUTH_DISABLED"]:
-            _record_security_event(get_db(), "USER_LOGOUT", user)
+            database = get_db()
+            timestamp = app.config["NOW_PROVIDER"]()
+            # Clearing the cookie only removes it from *this* browser. The session
+            # is a signed cookie, not a server-side record, so a copy taken earlier
+            # — a shared factory PC, a captured cookie — keeps authenticating until
+            # the signature expires or something bumps the version. Bumping the
+            # version is what actually ends the session, and it is what every other
+            # credential change already does; logout was the one that only cleared
+            # the local copy.
+            #
+            # The cost is that the account's other devices are logged out too. On a
+            # shop floor that is what "log out" means: accounts are per person, not
+            # shared across a phone and a tablet.
+            database.execute(
+                "UPDATE users SET session_version = session_version + 1, updated_at = ? WHERE id = ?",
+                (timestamp, user["id"]),
+            )
+            _record_security_event(database, "USER_LOGOUT", user)
         session.clear()
         return jsonify({"ok": True, "data": None})
 

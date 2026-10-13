@@ -31,7 +31,7 @@
 | --- | --- |
 | 密码存储 | Werkzeug `generate_password_hash`（scrypt/PBKDF2），**不存明文** |
 | 会话 | Flask session cookie，有效期 12 小时 |
-| 会话失效 | `users.session_version` 变化即失效：改密、改角色、改范围都会 +1 |
+| 会话失效 | `users.session_version` 变化即失效：改密、改角色、改范围、**登出**都会 +1 |
 | 首登强制改密 | `must_change_password = 1`，除 `me`/`logout`/`change-password` 外一律 428 |
 | 密码长度 | 8–128 字符 |
 | 默认管理员 | `admin` / `Admin@12345`，**首次登录强制修改** |
@@ -97,7 +97,16 @@ token 在登录与改密时重新生成。
 | 修改密码 | `session_version + 1`，**其他设备上的会话立即失效**，当前会话保留 |
 | 管理员重置密码 | 同上，目标账号所有会话失效 |
 | 管理员改角色 | 同上 |
+| **登出** | `session_version + 1`，**该账号所有会话失效**（含当前设备） |
 | 登录 | `session.clear()` 后重建，登录前会话不可复用；CSRF token 重新生成 |
+
+登出为什么也要 +1：会话是**签名 cookie**，不是服务端记录。`session.clear()` 只能把 cookie
+从**当前浏览器**里去掉，早就被拷走的那份（共用工位机、被抓包的 cookie）会一直认证到签名过期。
+递增 `session_version` 是这份系统里唯一能让已发出的 cookie 真正作废的机制，其他所有
+凭证变更都在用它，登出是此前唯一只清本地副本的一处。
+
+代价是该账号的其他设备同时下线——在现场这是「登出」应有的含义：账号按人分配，
+不在手机与平板之间共用。
 
 ### 记录归属权
 

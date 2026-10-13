@@ -604,3 +604,115 @@ def test_the_scope_column_is_constrained(app_and_path):
             )
     finally:
         connection.close()
+
+
+# --------------------------------------------------------------------------
+# Logout
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def authed(tmp_path):
+    """An app whose admin has finished the first-login password change.
+
+    ``make_auth_app`` leaves the bootstrap password in place, and the first-login
+    guard answers 428 to everything except ``me`` / ``logout`` / ``change-password``
+    — so a test that wants to exercise the rest of the API has to change it first.
+    """
+    app, database_path, _fake = make_auth_app(tmp_path)
+    bootstrap_admin(app)
+    return app, database_path
+
+
+def _captured_session_cookie(client):
+    """The raw signed session cookie the server just issued.
+
+    A test client has no cookie jar, so this reads the value out of the response
+    headers — the same bytes a browser stores, and the same bytes anyone who can
+    read them can copy.
+    """
+    for header in client.post(
+        "/api/auth/login", json={"username": "admin", "password": PASSWORD}
+    ).headers.getlist("Set-Cookie"):
+        if header.startswith("session="):
+            return header.split(";", 1)[0][len("session=") :]
+    raise AssertionError("login issued no session cookie to capture")
+
+
+def test_logout_ends_a_session_that_already_left_the_browser(authed):
+    """Logging out has to work for a cookie that is no longer in this browser.
+
+    ``session.clear()`` only removes the cookie from the browser that asked. The
+    session is a signed value, not a server-side record, so a copy taken earlier
+    keeps authenticating until the signature expires or something bumps the
+    version — which on a shared factory PC means the next operator inherits the
+    previous one's session, with the ability to write.
+
+    Bumping ``session_version`` is what every other credential change already
+    does; this asserts logout does it too, and that the replay fails for reads
+    *and* writes.
+    """
+    app, _database_path = authed
+    # Taken from a second client, not this one: the copy worth testing is somebody
+    # else's session, and logging in again on the same client would regenerate its
+    # CSRF token and make the logout below fail for the wrong reason.
+    donor = app.test_client()
+    captured = _captured_session_cookie(donor)
+    assert captured, "login must issue a session cookie there is something to capture"
+
+    client, csrf = login(app, "admin")
+    # Logout is a write, so it needs the token the login issued — the same
+    # requirement the real browser satisfies automatically.
+    assert client.post("/api/auth/logout", headers={"X-CSRF-Token": csrf}).status_code == 200
+
+    replay = app.test_client()
+    replay.set_cookie("session", captured, domain="localhost")
+    assert replay.get("/api/auth/me").status_code == 401
+    assert replay.post("/api/products", json={}).status_code == 401
+
+
+def test_logout_still_lands_in_the_audit_chain(authed):
+    """The audit record is the point of the bump, so it has to survive it."""
+    app, database_path = authed
+    client, csrf = login(app, "admin")
+    assert client.post("/api/auth/logout", headers={"X-CSRF-Token": csrf}).status_code == 200
+
+    connection = connect_database(database_path)
+    try:
+        event = connection.execute(
+            "SELECT event_type FROM audit_events WHERE event_type = 'USER_LOGOUT'"
+        ).fetchone()
+        assert event is not None, "logout must remain auditable"
+    finally:
+        connection.close()
+
+
+def test_logout_ends_the_accounts_other_devices_too(authed):
+    """The cost of the mechanism, asserted so it cannot change by accident.
+
+    ``session_version`` is per account, not per session, so logging out ends every
+    device at once. That is the intended trade on a shop floor — accounts are per
+    person, not shared across a phone and a tablet — and it is worth a test so the
+    next person to touch this knows it was chosen rather than missed.
+    """
+    app, _database_path = authed
+    _first, _csrf = login(app, "admin")
+    second, _csrf2 = login(app, "admin")
+
+    first_client, first_csrf = login(app, "admin")
+    assert first_client.post(
+        "/api/auth/logout", headers={"X-CSRF-Token": first_csrf}
+    ).status_code == 200
+
+    assert second.get("/api/auth/me").status_code == 401
+
+
+def test_logout_without_a_session_is_a_401_not_a_crash(authed):
+    """An expired or already-cleared cookie must not turn logout into a 500.
+
+    The auth guard runs in ``before_request``, so this also pins the order: the
+    request never reaches the handler that would touch the database.
+    """
+    app, _database_path = authed
+    client = app.test_client()
+    assert client.post("/api/auth/logout").status_code == 401
