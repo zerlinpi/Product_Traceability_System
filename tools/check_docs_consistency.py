@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import tempfile
 import tomllib
 from pathlib import Path
 
@@ -289,6 +290,46 @@ _DOC_PATH_RE = re.compile(
 _HISTORICAL_PREFIXES = (".kiro/", "docs/archive/")
 
 
+def _tracked_markdown() -> tuple[str, str | None]:
+    """The NUL-separated list of tracked markdown files, or the reason there is none.
+
+    The output is written to a file rather than captured through a pipe, and read
+    back as UTF-8 by name.
+
+    Both parts are deliberate. The file avoids depending on how a pipe behaves on
+    a given runner — the same call returned ``returncode=0``, an empty ``stderr``
+    and a ``None`` stdout on the Windows runner, which nothing in CPython's
+    ``capture_output`` path should produce and which could not be reproduced
+    anywhere else. Reading the bytes back from disk has no such ambiguity.
+
+    UTF-8 by name because the knowledge base is full of Chinese filenames: letting
+    ``text=True`` pick the encoding means ``locale.getpreferredencoding()`` decides
+    whether those paths survive, and on a Windows runner that is a legacy code page
+    under which UTF-8 bytes decode *successfully* into mojibake. A silently
+    mis-decoded path is worse than a crash — it looks like a file that is missing.
+
+    ``-z`` because git otherwise escapes non-ASCII paths into
+    ``"docs/knowledge-base/01-\\345\\277\\253..."``, quotes and octal and all, which
+    is not a path any more.
+    """
+    with tempfile.TemporaryDirectory() as scratch:
+        listing = Path(scratch) / "tracked.txt"
+        with listing.open("wb") as handle:
+            result = subprocess.run(
+                ["git", "ls-files", "-z", "*.md"],
+                cwd=ROOT,
+                stdout=handle,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        if result.returncode != 0:
+            return "", f"returncode={result.returncode} stderr={(result.stderr or b'')[:200]!r}"
+        try:
+            return listing.read_bytes().decode("utf-8"), None
+        except UnicodeDecodeError as error:  # pragma: no cover - a non-UTF-8 path
+            return "", f"路径不是 UTF-8：{error}"
+
+
 def check_deleted_file_references() -> None:
     """Current docs must not point at files that were removed.
 
@@ -310,31 +351,17 @@ def check_deleted_file_references() -> None:
     old filename in backticks, in the commit that archived the file away. Run the
     check after committing, or accept that CI reports it first.
     """
-    listed = subprocess.run(
-        # ``-z`` separates with NUL and never quotes. Without it git escapes any
-        # non-ASCII path — the knowledge base is full of Chinese filenames and they
-        # came back as "docs/knowledge-base/01-\345\277\253...", which is not a path
-        # any more, so every one of them was reported as missing.
-        ["git", "ls-files", "-z", "*.md"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if listed.returncode != 0 or listed.stdout is None:
+    listing, problem = _tracked_markdown()
+    if problem is not None:
         # An empty or absent answer is not "no deleted files" — it is git not
         # answering, and reporting nothing would pass a repository where nothing
-        # was checked. `stdout` can come back None if the call somehow ran without
-        # capturing, which used to surface three frames later as
-        # "AttributeError: 'NoneType' object has no attribute 'split'" and told the
-        # operator nothing about git at all.
-        fail(
-            "无法列出被跟踪的 markdown（需要在 git 工作区内运行）："
-            f"returncode={listed.returncode} stderr={listed.stderr!r}"
-        )
+        # was checked. This used to surface three frames later as
+        # "AttributeError: 'NoneType' object has no attribute 'split'", which told
+        # the operator nothing about git at all.
+        fail(f"无法列出被跟踪的 markdown（需要在 git 工作区内运行）：{problem}")
         return
 
-    for relative in listed.stdout.split("\0"):
+    for relative in listing.split("\0"):
         if not relative:
             continue
         if relative.startswith(_HISTORICAL_PREFIXES):

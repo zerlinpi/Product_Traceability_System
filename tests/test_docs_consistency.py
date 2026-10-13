@@ -302,12 +302,19 @@ def _fake_git(monkeypatch, tracked: str, deletions: dict[str, str]) -> None:
     clone and fail on a shallow one, and it would be asserting the environment
     rather than the logic. Faking both calls keeps it deterministic and lets the
     cases below state exactly which paths git claims to have deleted.
+
+    The listing call hands git a file to write into rather than a pipe, so the
+    fake writes into that handle — the same thing git does — instead of returning
+    the text and hoping the caller reads it from the right place.
     """
 
-    def run(args, **_kwargs):
+    def run(args, **kwargs):
         if args[:2] == ["git", "ls-files"]:
             assert "-z" in args, "必须以 -z 调用，否则非 ASCII 路径会被 git 转义成引号形式"
-            return type("Result", (), {"returncode": 0, "stdout": tracked})()
+            handle = kwargs.get("stdout")
+            assert hasattr(handle, "write"), "清单必须写进文件句柄，不能走管道"
+            handle.write(tracked.encode("utf-8"))
+            return type("Result", (), {"returncode": 0, "stdout": None, "stderr": b""})()
         path = args[-1]
         found = deletions.get(path, "")
         return type("Result", (), {"returncode": 0, "stdout": found})()
@@ -511,3 +518,52 @@ def test_non_ascii_paths_survive_the_listing(monkeypatch):
 
     missing = [item for item in checker.failures if "文件不存在" in item]
     assert not missing, f"中文路径被误判为不存在: {missing}"
+
+
+def test_a_git_that_does_not_answer_is_reported_not_swallowed(monkeypatch):
+    """git failing must be a failure, not "no deleted files".
+
+    This is the check that went red on the Windows CI runner with
+    ``AttributeError: 'NoneType' object has no attribute 'split'`` — an exception
+    raised three frames away from the call that produced it, naming neither git
+    nor the reason. Reporting nothing would be worse still: it would pass a
+    repository where nothing was examined, which is the failure that ships.
+
+    The listing also no longer depends on a pipe behaving, which is what produced
+    that None in the first place; this pins the message either way.
+    """
+
+    def failing_run(args, **kwargs):
+        return type("Result", (), {"returncode": 128, "stdout": None, "stderr": b"fatal: not a git repository"})()
+
+    monkeypatch.setattr(checker.subprocess, "run", failing_run)
+
+    checker.check_deleted_file_references()
+
+    assert checker.failures, "git 失败却没有任何报告"
+    message = " ".join(checker.failures)
+    assert "无法列出被跟踪的 markdown" in message
+    assert "128" in message, "报告里应带上 git 的返回码"
+    assert "not a git repository" in message, "报告里应带上 git 的 stderr"
+
+
+def test_the_listing_is_read_back_as_utf8(monkeypatch, tmp_path):
+    """The encoding must not be left to the runner's locale.
+
+    ``text=True`` decodes with ``locale.getpreferredencoding()``. On a Windows
+    runner that is a legacy code page, under which UTF-8 Chinese filenames decode
+    *successfully* into mojibake — so every knowledge-base page would look like a
+    file that does not exist, and the check would report drift that is not there.
+    Reading the bytes back as UTF-8 by name removes the question.
+    """
+    tracked = "docs/knowledge-base/快速开始.md\0docs/DATA_MODEL.md\0"
+    _fake_git(monkeypatch, tracked, {})
+    monkeypatch.setattr(checker, "read", lambda relative: "")
+
+    listing, problem = checker._tracked_markdown()
+
+    assert problem is None
+    assert listing.split("\0")[:2] == [
+        "docs/knowledge-base/快速开始.md",
+        "docs/DATA_MODEL.md",
+    ], "中文路径必须原样返回"
