@@ -262,6 +262,35 @@ def test_the_audit_event_has_a_label_the_screen_can_show():
     assert "INVENTORY_SYNC_UNKNOWN: '库存同步结果未知'" in source
 
 
+def test_a_timed_out_receipt_query_marks_the_run_not_just_the_rows(tmp_path):
+    """The query is unknown, so the run itself must not be recorded as failed.
+
+    Every per-product row goes to NEEDS_REVIEW, and the run's own record has to
+    agree — otherwise the append-only audit chain says the sync failed and a
+    retry is safe, which is the one instruction an unknown outcome must not
+    carry. This is the second of the two paths that reach that state; the first
+    is the fast-receive loop.
+    """
+    client, database_path, _product_model_id, _fake = setup_case(
+        tmp_path, uncertain={"receipt_list"}
+    )
+    client.post("/api/inventory-sync")
+
+    connection = connect_database(database_path)
+    try:
+        status = connection.execute(
+            "SELECT setting_value FROM app_settings WHERE setting_key='inventory_sync.status'"
+        ).fetchone()[0]
+        assert status == "NEEDS_REVIEW", f"the run was recorded as {status!r}"
+        event = connection.execute(
+            "SELECT event_type FROM audit_events "
+            "WHERE event_type LIKE 'INVENTORY_SYNC%' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert event["event_type"] == "INVENTORY_SYNC_UNKNOWN"
+    finally:
+        connection.close()
+
+
 def test_the_overall_summary_counts_a_unknown_product_as_not_pushed(tmp_path):
     """The one number the page shows must not silently drop the new status.
 

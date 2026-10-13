@@ -189,7 +189,11 @@ def sync_inventory_to_lingxing():
                 database, product_model_id, message, finished_at, uncertain=uncertain
             )
         database.commit()
-        release_guard("FAILED", message, [])
+        # And the record of the run says the same thing its per-product rows do.
+        # Writing FAILED here while every product is NEEDS_REVIEW leaves the
+        # append-only audit chain asserting a retry is safe, which is the one
+        # instruction an unknown outcome must not carry.
+        release_guard("NEEDS_REVIEW" if uncertain else "FAILED", message, [])
         if isinstance(error, (ApiError, LingxingError)):
             raise
         raise LingxingError(f"领星收货单查询失败：{message}") from error
