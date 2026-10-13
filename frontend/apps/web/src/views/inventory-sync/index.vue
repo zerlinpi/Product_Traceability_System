@@ -45,6 +45,7 @@ const metrics = computed(() => {
 
 const tableSummary = computed(() => (loaded.value
   ? `${items.value.length} 个产品 · 已推送 ${overall.value.pushed ?? 0} · 失败 ${overall.value.failed ?? 0}`
+  + (overall.value.needsReview ? ` · 结果未知 ${overall.value.needsReview} 个` : '')
   : '按产品查看当前库存与最近一次同步状态'))
 
 const allSelected = computed(() => items.value.length > 0
@@ -113,9 +114,19 @@ async function syncInventory(selectedOnly: boolean) {
     const result = await operationsApi.syncInventory(body)
     applyBoard({ overall: result?.overall, items: result?.items })
     loadError.value = ''
-    const failed = (result?.results ?? []).filter((item: AnyRecord) => item.status === 'FAILED').length
-    if (result?.syncStatus === 'PARTIAL' || failed) {
-      notifyWarning('库存同步部分完成', `成功 ${result?.itemCount ?? 0} 个 · 失败 ${failed} 个`)
+    // NEEDS_REVIEW counts as not-done, exactly as the backend's own summary
+    // counts it: reporting only FAILED here said "失败 0 个" while a product sat
+    // in 结果未知 waiting for someone to check Lingxing.
+    const rows = (result?.results ?? []) as AnyRecord[]
+    const failed = rows.filter((item: AnyRecord) => item.status === 'FAILED').length
+    const unknown = rows.filter((item: AnyRecord) => item.status === 'NEEDS_REVIEW').length
+    if (result?.syncStatus === 'PARTIAL' || failed || unknown) {
+      const detail = [
+        `成功 ${result?.itemCount ?? 0} 个`,
+        failed ? `失败 ${failed} 个` : '',
+        unknown ? `结果未知 ${unknown} 个（需先在领星核对）` : '',
+      ].filter(Boolean).join(' · ')
+      notifyWarning('库存同步部分完成', detail)
     }
     else {
       notifySuccess('库存同步完成', `本次快捷入库 ${result?.itemCount ?? 0} 个产品`)

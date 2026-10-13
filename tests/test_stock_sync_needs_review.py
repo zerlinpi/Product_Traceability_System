@@ -239,3 +239,26 @@ def test_a_timed_out_receipt_query_marks_every_product_needs_review(tmp_path):
 
     status, _error = _status_of(database_path, product_model_id)
     assert status == "NEEDS_REVIEW"
+
+
+def test_the_overall_summary_counts_a_unknown_product_as_not_pushed(tmp_path):
+    """The one number the page shows must not silently drop the new status.
+
+    inventory_sync_overall counted only FAILED, so a scope of three pushed and two
+    unknown reported 失败 0 — the two that need checking in Lingxing became
+    invisible in the only summary the operator reads. ``needsReview`` is broken out
+    as well, because "failed" and "unknown" call for different actions: retry the
+    first, look before touching the second.
+    """
+    client, database_path, product_model_id, _fake = setup_case(
+        tmp_path, uncertain={"inventory_sync"}
+    )
+    client.post("/api/inventory-sync")
+
+    board = client.get("/api/inventory-sync")
+    assert board.status_code == 200
+    overall = board.get_json()["data"]["overall"]
+    assert overall["total"] >= 1
+    assert overall["failed"] >= 1, "a 结果未知 product is not a pushed one"
+    assert overall["needsReview"] >= 1, "the count the page needs must be there"
+    assert overall["pushed"] + overall["failed"] + overall["pending"] == overall["total"]

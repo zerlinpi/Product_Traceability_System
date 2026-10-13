@@ -131,6 +131,12 @@ def inventory_sync_overall(
     database: sqlite3.Connection, items: list[dict[str, Any]]
 ) -> dict[str, Any]:
     settings = inventory_sync_settings(database)
+    # NEEDS_REVIEW counts as not-pushed, the same way the sync path's own summary
+    # counts it: the product was not synced either way, and the operator's next
+    # action is the message. Leaving it out made a scope of, say, three pushed and
+    # two unknown report "失败 0" — the two that need checking in Lingxing become
+    # invisible in the only number the page shows.
+    not_pushed = {"FAILED", "NEEDS_REVIEW"}
     return {
         "syncStatus": settings.get("status") or "PENDING",
         "syncedAt": settings.get("synced_at") or None,
@@ -140,7 +146,10 @@ def inventory_sync_overall(
         "total": len(items),
         "pushed": sum(1 for item in items if item["syncStatus"] == "PUSHED"),
         "pending": sum(1 for item in items if item["syncStatus"] == "PENDING"),
-        "failed": sum(1 for item in items if item["syncStatus"] == "FAILED"),
+        "failed": sum(1 for item in items if item["syncStatus"] in not_pushed),
+        # Broken out because "failed" and "unknown" call for different actions:
+        # retry the first, check Lingxing before touching the second.
+        "needsReview": sum(1 for item in items if item["syncStatus"] == "NEEDS_REVIEW"),
     }
 
 
