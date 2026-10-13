@@ -37,6 +37,7 @@ filterwarnings = ["error::DeprecationWarning:app", "error::DeprecationWarning:tr
 # nobody has seen.
 omit = [
     "*/tools/acceptance.py",     # run by the acceptance job; drives a live app
+    "*/tools/smoke.py",          # run by the acceptance job; drives it over HTTP
     "*/tools/dev_server.py",     # run by the frontend job to host the e2e smoke test
     "*/tools/build_frontend.py", # build-time; needs Node, so it cannot run here
 ]

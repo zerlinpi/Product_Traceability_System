@@ -199,14 +199,21 @@ jobs:
   # application, and its checks are the acceptance scenarios the deliverable is
   # judged on.
   #
-  # It is also why that file is out of the pytest coverage scope (see
-  # [tool.coverage.run] in pyproject.toml): the floor describes the system that
-  # ships, and the harness is verification — verified here instead, by running it.
-  # Before this job existed the harness was a file nobody ran, which is exactly
-  # how a 359-statement acceptance script ends up never executed at all.
+  # `tools/smoke.py` then drives that same application over a real socket, which
+  # is the one thing every other check in this repository does not do — the suites
+  # use Flask's test client and never open a connection. That is how the logout bug
+  # survived a green suite: session.clear() really did log out the client it was
+  # called on, and nothing in the suite ever held a second copy of the cookie.
   #
-  # Ubuntu only, for the same reason as the e2e smoke test above: it drives a Flask
-  # test client and a SQLite file, neither of which varies by platform.
+  # Both are out of the pytest coverage scope (see [tool.coverage.run] in
+  # pyproject.toml): the floor describes the system that ships, and these are
+  # verification — verified here instead, by running them. Before this job existed
+  # the harness was a file nobody ran, which is exactly how a 359-statement
+  # acceptance script ends up never executed at all.
+  #
+  # Ubuntu only, for the same reason as the e2e smoke test above: they drive a
+  # Flask test client, a real socket on loopback and a SQLite file, none of which
+  # varies by platform.
   acceptance:
     name: Business acceptance (scenarios A-J)
     runs-on: ubuntu-latest
@@ -222,6 +229,8 @@ jobs:
           python -m pip install -r requirements-dev.txt
       - name: Run the factory's own workflow end to end
         run: python tools/acceptance.py
+      - name: Drive the running service over real HTTP
+        run: python tools/smoke.py
 
   test:
     name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})

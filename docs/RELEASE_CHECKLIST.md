@@ -14,7 +14,7 @@ CI 每次 push 到 `main` 都会跑，红了就是没通过：
 | Permission matrix is in sync | `tools/extract_routes.py --check`——权限矩阵与代码一致 |
 | Docs match the code | `tools/check_docs_consistency.py`——文档描述的是当前系统；`tools/check_knowledge_base.py`——知识库链接完整、无孤立页面 |
 | Frontend | `pnpm typecheck`、`pnpm build`、**已提交 bundle 与源码指纹一致**、浏览器 smoke E2E |
-| Business acceptance (scenarios A-J) | `tools/acceptance.py`——一个产品从供应商来料走到合格入库，端到端数字仍对得上 |
+| Business acceptance (scenarios A-J) | `tools/acceptance.py`——一个产品从供应商来料走到合格入库，端到端数字仍对得上；`tools/smoke.py`——同一套服务走真实 HTTP：登录/CSRF/登出、响应头、gzip 协商、列表窗口头 |
 | Test (ubuntu / windows) | 测试数量守卫（`tools/check_test_count.py`）+ 全量 pytest + coverage 门槛 |
 | （pytest 内） | `python tools/check_frontend_build.py` 的指纹校验、审计链与权限矩阵的回归测试 |
 
