@@ -923,10 +923,13 @@ def hold_wal_shared_memory(path: str | Path) -> None:
     if key in _WAL_HOLDERS:
         return
     connection = connect_database(path)
-    # A read is enough to make SQLite materialise the -shm. The connection is
-    # then left idle — no transaction open, so it holds no read snapshot and does
-    # not block checkpointing.
-    connection.execute("SELECT 1").fetchone()
+    # The read has to touch the database, not just be a constant. ``SELECT 1``
+    # needs no table, and on some SQLite builds it never opens the file at all —
+    # so the shared-memory index is never created and the holder holds nothing.
+    # Reading the schema always goes through the pager, which always materialises
+    # it. The connection is then left idle: no transaction open, so it holds no
+    # read snapshot and does not block checkpointing.
+    connection.execute("SELECT COUNT(*) FROM sqlite_master").fetchone()
     _WAL_HOLDERS[key] = connection
 
 

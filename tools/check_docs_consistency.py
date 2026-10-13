@@ -321,8 +321,17 @@ def check_deleted_file_references() -> None:
         text=True,
         check=False,
     )
-    if listed.returncode != 0:
-        fail("无法列出被跟踪的 markdown（需要在 git 工作区内运行）")
+    if listed.returncode != 0 or listed.stdout is None:
+        # An empty or absent answer is not "no deleted files" — it is git not
+        # answering, and reporting nothing would pass a repository where nothing
+        # was checked. `stdout` can come back None if the call somehow ran without
+        # capturing, which used to surface three frames later as
+        # "AttributeError: 'NoneType' object has no attribute 'split'" and told the
+        # operator nothing about git at all.
+        fail(
+            "无法列出被跟踪的 markdown（需要在 git 工作区内运行）："
+            f"returncode={listed.returncode} stderr={listed.stderr!r}"
+        )
         return
 
     for relative in listed.stdout.split("\0"):
