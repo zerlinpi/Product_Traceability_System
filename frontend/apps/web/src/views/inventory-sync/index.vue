@@ -21,6 +21,7 @@ const OVERALL_STATUS: Record<string, { label: string, tone: string }> = {
   PENDING: { label: '待推送', tone: 'warning' },
   PUSHED: { label: '已推送', tone: 'success' },
   FAILED: { label: '推送失败', tone: 'danger' },
+  NEEDS_REVIEW: { label: '结果未知', tone: 'warning' },
   PARTIAL: { label: '部分成功', tone: 'warning' },
 }
 

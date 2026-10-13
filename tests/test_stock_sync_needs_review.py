@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import sqlite3
 
+from pathlib import Path
+
 from app import create_app
 from batch_strategies import build_product_scenario
 from capability_helpers import FakeLingxingService
@@ -27,6 +29,8 @@ from test_inbound_receipts import create_order
 from test_inventory_sync import inbound_stock
 from test_production_orders import create_production
 from traceability.db import SCHEMA_VERSION, connect_database
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def setup_case(tmp_path, *, uncertain=(), failures=()):
@@ -241,6 +245,23 @@ def test_a_timed_out_receipt_query_marks_every_product_needs_review(tmp_path):
     assert status == "NEEDS_REVIEW"
 
 
+def test_the_audit_event_has_a_label_the_screen_can_show():
+    """An audit event nobody can read is an audit event nobody checks.
+
+    The backend writes INVENTORY_SYNC_UNKNOWN; the audit screen renders whatever
+    ``AUDIT_EVENT_LABELS`` holds for the type. If the two drift the log still
+    records the outcome correctly, but the operator sees a raw event name and
+    scans past it — and the whole point of a fourth status is that it is legible.
+    Asserted against the source rather than a rendered page because that is where
+    the drift would start.
+    """
+    source = (ROOT / "frontend" / "apps" / "web" / "src" / "utils" / "format.ts").read_text(
+        encoding="utf-8"
+    )
+    assert "INVENTORY_SYNC_UNKNOWN" in source, "the audit screen has no label for this event"
+    assert "INVENTORY_SYNC_UNKNOWN: '库存同步结果未知'" in source
+
+
 def test_the_overall_summary_counts_a_unknown_product_as_not_pushed(tmp_path):
     """The one number the page shows must not silently drop the new status.
 
@@ -262,3 +283,56 @@ def test_the_overall_summary_counts_a_unknown_product_as_not_pushed(tmp_path):
     assert overall["failed"] >= 1, "a 结果未知 product is not a pushed one"
     assert overall["needsReview"] >= 1, "the count the page needs must be there"
     assert overall["pushed"] + overall["failed"] + overall["pending"] == overall["total"]
+
+
+def test_an_unknown_outcome_is_not_recorded_as_a_failure(tmp_path):
+    """The audit chain is append-only, so the word in it is permanent.
+
+    A run whose every product timed out used to write INVENTORY_SYNC_FAILED and
+    status FAILED. That is a permanent record saying the sync failed, which the
+    next operator reads as "sync it again" — the exact instruction the whole
+    NEEDS_REVIEW distinction exists to withhold. The purchase-order pushes record
+    PO_PUSH_UNKNOWN for the same reason; this is that, for the stock sync.
+    """
+    client, database_path, _product_model_id, _fake = setup_case(
+        tmp_path, uncertain={"inventory_sync"}
+    )
+    client.post("/api/inventory-sync")
+
+    connection = connect_database(database_path)
+    try:
+        status = connection.execute(
+            "SELECT setting_value FROM app_settings WHERE setting_key='inventory_sync.status'"
+        ).fetchone()[0]
+        assert status == "NEEDS_REVIEW", f"the guard recorded {status!r}"
+
+        event = connection.execute(
+            "SELECT event_type, payload_json FROM audit_events "
+            "WHERE event_type LIKE 'INVENTORY_SYNC%' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert event["event_type"] == "INVENTORY_SYNC_UNKNOWN"
+        assert '"NEEDS_REVIEW"' in event["payload_json"]
+    finally:
+        connection.close()
+
+
+def test_a_definite_failure_is_still_recorded_as_a_failure(tmp_path):
+    """The distinction only helps if the definite case keeps its word."""
+    client, database_path, _product_model_id, _fake = setup_case(
+        tmp_path, failures={"inventory_sync"}
+    )
+    client.post("/api/inventory-sync")
+
+    connection = connect_database(database_path)
+    try:
+        status = connection.execute(
+            "SELECT setting_value FROM app_settings WHERE setting_key='inventory_sync.status'"
+        ).fetchone()[0]
+        assert status == "FAILED"
+        event = connection.execute(
+            "SELECT event_type FROM audit_events "
+            "WHERE event_type LIKE 'INVENTORY_SYNC%' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert event["event_type"] == "INVENTORY_SYNC_FAILED"
+    finally:
+        connection.close()

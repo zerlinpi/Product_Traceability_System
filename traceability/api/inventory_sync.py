@@ -148,7 +148,10 @@ def sync_inventory_to_lingxing():
             "inventory_sync.error": error_message,
         }.items():
             upsert_app_setting(database, key, value, finished_at)
-        event_type = "INVENTORY_SYNC_PUSHED" if status == "PUSHED" else "INVENTORY_SYNC_FAILED"
+        event_type = {
+            "PUSHED": "INVENTORY_SYNC_PUSHED",
+            "NEEDS_REVIEW": "INVENTORY_SYNC_UNKNOWN",
+        }.get(status, "INVENTORY_SYNC_FAILED")
         record_audit_event(
             database,
             event_type,
@@ -251,17 +254,28 @@ def sync_inventory_to_lingxing():
     # through to "没有可同步的收货单" — a message that sends the operator looking
     # for a missing 收货单 when the real answer is that one timed out and needs
     # checking in Lingxing first.
-    failed = [item for item in results if item["status"] in ("FAILED", "NEEDS_REVIEW")]
+    not_pushed = [item for item in results if item["status"] in ("FAILED", "NEEDS_REVIEW")]
+    unknown = [item for item in results if item["status"] == "NEEDS_REVIEW"]
+    definite_failures = [item for item in results if item["status"] == "FAILED"]
     if succeeded == 0:
         # Nothing was received (every scoped product failed) — surface the
-        # first reason and leave local stock untouched.
-        message = failed[0]["message"] if failed else "没有可同步的收货单"
-        release_guard("FAILED", message, results)
+        # first reason and leave local stock untouched. The status written is
+        # NEEDS_REVIEW when nothing actually failed, because the audit chain is
+        # append-only and permanent: recording an unknown outcome as a failure
+        # would leave a permanent record of a retry being safe, which is the
+        # thing the whole distinction exists to prevent. The purchase-order
+        # pushes record PO_PUSH_UNKNOWN for exactly this reason.
+        message = not_pushed[0]["message"] if not_pushed else "没有可同步的收货单"
+        guard_status = "FAILED" if definite_failures else "NEEDS_REVIEW"
+        release_guard(guard_status, message, results)
         raise LingxingError(f"领星快捷入库失败：{message}")
-    overall_status = "PUSHED" if not failed else "PARTIAL"
+    # A run that pushed some products and left others unknown is PARTIAL either
+    # way, but the reason it reports is the one that needs the operator's action.
+    overall_status = "PUSHED" if not not_pushed else "PARTIAL"
+    headline = definite_failures or unknown
     release_guard(
         overall_status,
-        failed[0]["message"] if failed else "",
+        headline[0]["message"] if headline else "",
         results,
     )
     items = inventory_sync_items(database)

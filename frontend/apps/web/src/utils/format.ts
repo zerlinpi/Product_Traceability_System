@@ -117,6 +117,7 @@ const AUDIT_EVENT_LABELS: Record<string, string> = {
   FINISHED_GOODS_RECEIVED: '成品扫码入库',
   INVENTORY_SYNC_PUSHED: '库存同步成功',
   INVENTORY_SYNC_FAILED: '库存同步失败',
+  INVENTORY_SYNC_UNKNOWN: '库存同步结果未知',
   USER_LOGIN: '账号登录',
   USER_LOGOUT: '退出登录',
   USER_PASSWORD_CHANGED: '密码已修改',
