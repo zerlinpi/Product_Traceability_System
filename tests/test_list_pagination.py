@@ -32,6 +32,8 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app import create_app  # noqa: E402
+from batch_strategies import build_product_scenario  # noqa: E402
 from capability_helpers import bootstrap_admin, make_auth_app  # noqa: E402
 from traceability.errors import ApiError  # noqa: E402
 from traceability.pagination import (  # noqa: E402
@@ -293,3 +295,138 @@ def test_the_benchmark_tool_is_importable():
 
     assert benchmark_lists.ROWS["batch_trace_records"] > 0
     assert json.dumps(benchmark_lists.ROWS)  # serialisable, i.e. plain data
+
+
+# --------------------------------------------------------------------------
+# The same contract, on every endpoint that claims it
+# --------------------------------------------------------------------------
+
+#: Endpoints that went through parse_list_window in the round that added it. The
+#: one covered above is the first of these; the other four had the same exposure
+#: — an unbounded table and a front end that renders every row it is handed — and
+#: none of them had a test that the window actually moves.
+#:
+#: The check is deliberately blunt: page 0 and page 1 with the same limit must not
+#: overlap. That is what catches a query that computes a total and sets headers
+#: but never puts LIMIT/OFFSET in the SQL — the headers say "window of 250", the
+#: body is the whole table, and asking for the next page returns the first page
+#: again. Every one of these passed on the first run except ... all of them, which
+#: is the point: nothing was checking.
+BOUNDED_ENDPOINTS = (
+    "/api/batch-trace-records",
+    "/api/purchase-orders",
+    "/api/production-orders",
+    "/api/inbound-receipts",
+    "/api/supplier-inventory-batches",
+)
+
+
+def _seeded_orders_app(tmp_path, count=6):
+    """An app with `count` orders at every stage, so each has something to page.
+
+    Seeded by SQL rather than through the API: the point is the shape of the
+    window, not the creation flow, and six rows through five endpoints is a few
+    hundred statements either way.
+    """
+    # Auth disabled, the way setup_case in test_purchase_orders does it: the point
+    # of this fixture is the shape of the window, and with auth on every POST in
+    # build_product_scenario would need a CSRF header the helper has no way to pass.
+    database_path = tmp_path / "paged.db"
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(database_path),
+            "NOW_PROVIDER": lambda: "2026-01-01T00:00:00",
+        }
+    )
+    client = app.test_client()
+    connection = sqlite3.connect(str(database_path))
+    try:
+        # A real product/supplier/part, because the joins need them to exist.
+        scenario = build_product_scenario(client, "PW", [1], 100)
+        supplier_id = scenario["suppliers"][0]["id"]
+        part_type_id = scenario["parts"][0]["id"]
+
+        for index in range(count):
+            cursor = connection.execute(
+                "INSERT INTO purchase_orders(po_no, supplier_id, part_type_id, quantity, "
+                "fields_json, created_at) VALUES (?, ?, ?, 5, '{}', ?)",
+                (f"PO-{index:04d}", supplier_id, part_type_id, f"2026-01-0{index + 1}T00:00:00"),
+            )
+            order_id = cursor.lastrowid
+            batch = connection.execute(
+                "INSERT INTO production_batches(batch_code, product_model_id, prefix, "
+                "planned_quantity, generated_at) VALUES (?, 1, 'TW', 10, ?)",
+                (f"PB-{index:04d}", f"2026-01-0{index + 1}T00:00:00"),
+            )
+            connection.execute(
+                "INSERT INTO production_orders(purchase_order_id, production_batch_id, created_at) "
+                "VALUES (?, ?, ?)",
+                (order_id, batch.lastrowid, f"2026-01-0{index + 1}T00:00:00"),
+            )
+            connection.execute(
+                "INSERT INTO batch_trace_records(production_batch_id, registered_quantity, "
+                "registered_at, quality_status) VALUES (?, 10, ?, 'ASSEMBLED')",
+                (batch.lastrowid, f"2026-01-0{index + 1}T00:00:00"),
+            )
+            connection.execute(
+                "INSERT INTO inbound_receipts(purchase_order_id, quantity, received_at, created_at) "
+                "VALUES (?, 5, ?, ?)",
+                (order_id, f"2026-01-0{index + 1}T00:00:00", f"2026-01-0{index + 1}T00:00:00"),
+            )
+            # No supplier_id on this table — the supplier is reached through the
+            # part type, which is why only part_type_id is supplied.
+            connection.execute(
+                "INSERT INTO supplier_inventory_batches(part_type_id, batch_no, "
+                "quantity_received, quantity_available, received_date, created_at, updated_at) "
+                "VALUES (?, ?, 10, 10, '2026-01-01', '2026-01-01T00:00:00', '2026-01-01T00:00:00')",
+                (part_type_id, f"SIB-{index:04d}"),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+    return app, count, client
+
+
+@pytest.mark.parametrize("endpoint", BOUNDED_ENDPOINTS)
+def test_asking_for_the_next_page_returns_the_next_rows(tmp_path, endpoint):
+    """A window that does not move is a window that hides data.
+
+    page=0 and page=1 with the same limit must be disjoint, and together they must
+    be smaller than the table — if the limit were not applied both pages would be
+    the whole table and would overlap completely.
+    """
+    app, seeded, client = _seeded_orders_app(tmp_path)
+
+    first = client.get(f"{endpoint}?limit=2&offset=0")
+    second = client.get(f"{endpoint}?limit=2&offset=2")
+
+    assert first.status_code == 200, first.get_json()
+    assert second.status_code == 200, second.get_json()
+
+    first_ids = [row["id"] for row in first.get_json()["data"]]
+    second_ids = [row["id"] for row in second.get_json()["data"]]
+
+    assert len(first_ids) == 2, f"limit 没有被应用：第一页返回了 {len(first_ids)} 行"
+    assert len(second_ids) == 2, f"limit 没有被应用：第二页返回了 {len(second_ids)} 行"
+    assert not set(first_ids) & set(second_ids), (
+        f"{endpoint} 的 offset 没有生效：两页拿到同一批行"
+    )
+    assert int(first.headers["X-Total-Count"]) >= seeded
+
+
+@pytest.mark.parametrize("endpoint", BOUNDED_ENDPOINTS)
+def test_the_reported_window_matches_what_was_sent(tmp_path, endpoint):
+    """The headers describe the page, and the body is that page.
+
+    ``X-Returned-Count`` is computed from the arithmetic rather than counted from
+    the body, so a query that ignores its window would still report a tidy
+    ``2``. Comparing it against the body is what makes the header accountable.
+    """
+    app, _seeded, client = _seeded_orders_app(tmp_path)
+
+    response = client.get(f"{endpoint}?limit=2&offset=0")
+    body = response.get_json()["data"]
+
+    assert len(body) == int(response.headers["X-Returned-Count"])
+    assert int(response.headers["X-List-Limit"]) == 2
