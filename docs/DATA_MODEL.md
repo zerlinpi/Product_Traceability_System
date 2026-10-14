@@ -28,14 +28,37 @@
 | **v23** | `purchase_orders` / `inbound_receipts` 重建：`sync_status` 增加 `NEEDS_REVIEW` | 重建（放宽 CHECK） |
 | **v24** | `product_stock_sync` 重建：`sync_status` 增加 `NEEDS_REVIEW` | 重建（放宽 CHECK） |
 
-### ⚠️ 当前部署状态
+### ⚠️ 本机部署库的状态（快照，会变）
 
-`data/traceability.db` 实际为 **`user_version = 23`**，落后代码一个版本。
-下次启动将执行 v24：**重建** `product_stock_sync`，把 `sync_status` 的
-CHECK 由三值放宽为四值（增加 `NEEDS_REVIEW`）。重建在同一 `BEGIN IMMEDIATE` 事务内完成，
-所有列原样搬移，既有行不受影响；失败即整体回滚。
+`data/traceability.db` 不在版本库里（`.gitignore` 里是 `data/*.db`），所以这一段的数字
+只是某一次实测的快照，**不要当成保证**。查你自己的库：
 
-（v23 的同类重建已在上一轮完成：`purchase_orders` 与 `inbound_receipts`。）
+```bash
+python -c "import sqlite3;print(sqlite3.connect('data/traceability.db').execute('PRAGMA user_version').fetchone()[0])"
+```
+
+2026-10-14 实测：**`user_version = 22`**，`purchase_orders`、`inbound_receipts`、
+`product_stock_sync` 三张表的 `sync_status` 都还是三值 CHECK。也就是说下次启动会
+**连续执行两个迁移**，重建三张表：
+
+| 迁移 | 重建 | 变化 |
+| --- | --- | --- |
+| v23 | `purchase_orders`、`inbound_receipts` | `sync_status` 增加 `NEEDS_REVIEW` |
+| v24 | `product_stock_sync` | 同上 |
+
+每个迁移各自在一个 `BEGIN IMMEDIATE` 事务内完成，列与索引原样搬移、既有行不受影响。
+**迁移失败会中止启动**，而不是让服务带着半迁移的库跑起来——已完成的迁移保持已提交，
+未完成的那个整体回滚，库停在它自己的版本上，修好原因后下次启动从该版本重跑。
+
+这一点实测过（2026-10-14，用本机 v22 部署库的副本）：
+
+| 场景 | 结果 |
+| --- | --- |
+| v22 → v24 正常升级 | `user_version = 24`，`integrity_check = ok`，无外键违规，38 条审计事件与 4 个用户等数据一条不少，三张表的 CHECK 都已放宽 |
+| 故意让 v24 重建抛错 | **启动失败**；库停在 `user_version = 23`（v23 的重建已提交，`purchase_orders` 已有 `NEEDS_REVIEW`），`integrity_check = ok`，数据完好 |
+
+从 v11 一路升到 v24 的完整链路由 `tests/test_batch_migration.py` 覆盖
+（`_seed_history` 会走遍每个迁移），v22 → v24 是这条链的尾段。
 
 ### 启动时附加动作
 
