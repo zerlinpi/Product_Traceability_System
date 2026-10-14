@@ -67,7 +67,9 @@ const moreOpen = ref<string[]>([])
 
 const suppliers = ref<AnyRecord[]>([])
 const parts = ref<AnyRecord[]>([])
-const inventoryBatches = ref<AnyRecord[]>([])
+/** Batches per part type, loaded on demand — see `ensureBatchesForPart`. */
+const batchesByPart = ref<Record<string, AnyRecord[]>>({})
+const batchesLoading = ref<Set<string>>(new Set())
 const catalogLoading = ref(false)
 
 const isEdit = computed(() => Boolean(props.product?.id))
@@ -144,7 +146,12 @@ function batchOptions(row: ComponentRow) {
   if (!row.partTypeId) {
     return []
   }
-  return inventoryBatches.value.filter(item => item.partTypeId === row.partTypeId && (item.active || item.id === row.inventoryBatchId))
+  // Active batches, plus the one already bound to the row even if it was since
+  // disabled — otherwise opening an existing product would show the bound batch
+  // as an empty select and quietly drop it on save.
+  return (batchesByPart.value[String(row.partTypeId)] ?? []).filter(
+    item => item.active || item.id === row.inventoryBatchId,
+  )
 }
 
 function partLabel(part: AnyRecord) {
@@ -158,19 +165,59 @@ function onSupplierChange(row: ComponentRow) {
 
 function onPartChange(row: ComponentRow) {
   row.inventoryBatchId = undefined
+  if (row.partTypeId) {
+    void ensureBatchesForPart(row.partTypeId)
+  }
+}
+
+/**
+ * Load the batches for one part, on demand, and remember them.
+ *
+ * Batches used to be fetched once for the whole factory and filtered in the
+ * browser. That stopped being correct when the endpoint became bounded: the
+ * window is applied before the browser's filter and ordered by supplier and part
+ * name, not by part — so a product whose part owns none of the newest 500 batches
+ * opened with an empty dropdown while the stock sat in the database. Filtering
+ * server-side, by part, keeps the rows the operator is actually choosing between.
+ */
+async function ensureBatchesForPart(partTypeId: number) {
+  const key = String(partTypeId)
+  if (batchesByPart.value[key] || batchesLoading.value.has(key)) {
+    return
+  }
+  batchesLoading.value.add(key)
+  try {
+    // Not `available=1`: a bound but since-disabled batch has to stay selectable,
+    // which `batchOptions` handles from the same response.
+    batchesByPart.value[key] = await catalogApi.inventoryBatches({ partTypeId })
+  }
+  catch (error) {
+    notifyError(error, '供应批次加载失败')
+  }
+  finally {
+    batchesLoading.value.delete(key)
+  }
+}
+
+/** Any part the form now names but whose batches have not been loaded yet. */
+function ensureBatchesForRows() {
+  for (const row of form.components) {
+    if (row.partTypeId && !batchesByPart.value[String(row.partTypeId)]) {
+      void ensureBatchesForPart(row.partTypeId)
+    }
+  }
 }
 
 async function loadCatalogs() {
   catalogLoading.value = true
   try {
-    const [supplierList, partList, batchList] = await Promise.all([
+    const [supplierList, partList] = await Promise.all([
       catalogApi.suppliers(),
       catalogApi.partTypes(),
-      catalogApi.inventoryBatches(),
     ])
     suppliers.value = supplierList
     parts.value = partList
-    inventoryBatches.value = batchList
+    ensureBatchesForRows()
   }
   catch (error) {
     notifyError(error, '供应商与批次加载失败')

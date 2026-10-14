@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -430,3 +431,84 @@ def test_the_reported_window_matches_what_was_sent(tmp_path, endpoint):
 
     assert len(body) == int(response.headers["X-Returned-Count"])
     assert int(response.headers["X-List-Limit"]) == 2
+
+
+def test_filtering_by_part_type_happens_server_side():
+    """The batch picker depends on this, so the filter has to actually exclude.
+
+    The product form used to fetch every inventory batch and filter by part in
+    the browser. It now asks the server for one part's batches — which is only
+    correct if the endpoint filters them out, not just narrows what it happens to
+    return. The existing uses of this parameter happen to take ``[0]`` of the
+    response, so a filter that silently returned everything would still pass them.
+
+    Two parts, two batches each, ask for one part: the other part's batches must
+    not be in the answer, and its supplier must not leak in either.
+    """
+    database_path = Path(tempfile.mkdtemp(prefix="pts-part-filter-")) / "paged.db"
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(database_path),
+            "NOW_PROVIDER": lambda: "2026-01-01T00:00:00",
+        }
+    )
+    client = app.test_client()
+    # Two suppliers, one part each, one active batch each — so every identity the
+    # response carries belongs to exactly one of the two parts.
+    for index in (1, 2):
+        supplier = client.post(
+            "/api/suppliers", json={"supplierCode": f"SUP-F{index}", "name": f"供应商 {index}"}
+        ).get_json()["data"]
+        part = client.post(
+            "/api/part-types",
+            json={
+                "partCode": f"PART-F{index}",
+                "name": f"部件 {index}",
+                "supplierId": supplier["id"],
+            },
+        ).get_json()["data"]
+        client.post(
+            "/api/supplier-inventory-batches",
+            json={
+                "partTypeId": part["id"],
+                "batchNo": f"SIB-F{index}",
+                "quantity": 10,
+                "receivedDate": "2026-01-01",
+            },
+        )
+
+    wanted = client.get(f"/api/supplier-inventory-batches?partTypeId={1}").get_json()["data"]
+
+    assert {row["batchNo"] for row in wanted} == {"SIB-F1"}, "另一部件的批次混进来了"
+    assert {row["partTypeId"] for row in wanted} == {1}
+    assert {row["supplierId"] for row in wanted} == {1}, "过滤没有触及供应商"
+
+
+def test_the_product_form_asks_the_server_for_each_part():
+    """And the front end has to use that filter rather than re-implement it.
+
+    Fetching all batches and filtering by part in the browser reads fine and is
+    quietly wrong: the window is applied before the browser's filter and ordered
+    by supplier and part name, so a product whose part owns none of the newest
+    window's rows opens with an empty dropdown while the stock exists. Asserted
+    against the source because that is where the regression would be.
+    """
+    source = (
+        Path(__file__).resolve().parent.parent
+        / "frontend"
+        / "apps"
+        / "web"
+        / "src"
+        / "views"
+        / "products"
+        / "components"
+        / "ProductFormDialog.vue"
+    ).read_text(encoding="utf-8")
+
+    assert "catalogApi.inventoryBatches({ partTypeId })" in source, (
+        "应按部件向服务端取批次，而不是取全表再在浏览器里过滤"
+    )
+    assert "batchesByPart" in source
+    # The client-side filter that this replaces: it must not come back.
+    assert "inventoryBatches.value.filter(item => item.partTypeId" not in source
