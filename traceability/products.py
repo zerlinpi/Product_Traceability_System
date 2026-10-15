@@ -184,6 +184,7 @@ def _assemble_product_configuration(
     components: list[dict[str, Any]],
     generated_count: int,
     generation_batch_count: int,
+    production_batch_count: int,
     created_by: str,
 ) -> dict[str, Any]:
     """Build the product configuration payload from already-fetched pieces.
@@ -232,6 +233,10 @@ def _assemble_product_configuration(
         "componentCount": len(components),
         "generatedCount": generated_count,
         "generationBatchCount": generation_batch_count,
+        # Carried on the product because the trace screen shows a count per
+        # product in its picker. It used to derive that by downloading every
+        # production batch in the factory and counting them in the browser.
+        "productionBatchCount": production_batch_count,
         "availableUnits": available_units,
     }
 
@@ -257,6 +262,10 @@ def product_configuration_dict(
         "SELECT COUNT(*) AS n FROM product_code_batches WHERE product_model_id = ?",
         (row["id"],),
     ).fetchone()["n"]
+    production_batch_count = database.execute(
+        "SELECT COUNT(*) AS n FROM production_batches WHERE product_model_id = ?",
+        (row["id"],),
+    ).fetchone()["n"]
     created_by = ""
     created_by_user_id = (
         row["created_by_user_id"] if "created_by_user_id" in row.keys() else None
@@ -274,6 +283,7 @@ def product_configuration_dict(
         components=components,
         generated_count=generated_count,
         generation_batch_count=generation_batch_count,
+        production_batch_count=production_batch_count,
         created_by=created_by,
     )
 
@@ -337,6 +347,16 @@ def list_product_configurations(
             product_ids,
         ).fetchall()
     }
+    # Same aggregate, same reason: the trace screen counts a product's batches in
+    # its picker, and one grouped query keeps it off the N+1 path.
+    batch_counts = {
+        r["product_model_id"]: r["n"]
+        for r in database.execute(
+            f"SELECT product_model_id, COUNT(*) AS n FROM production_batches "
+            f"WHERE product_model_id IN ({placeholders}) GROUP BY product_model_id",
+            product_ids,
+        ).fetchall()
+    }
 
     # Creator display names in one query.
     creator_names: dict[int, str] = {}
@@ -367,6 +387,7 @@ def list_product_configurations(
                 components=components,
                 generated_count=code_set_counts.get(row["id"], 0),
                 generation_batch_count=code_batch_counts.get(row["id"], 0),
+                production_batch_count=batch_counts.get(row["id"], 0),
                 created_by=creator_names.get(created_by_user_id, ""),
             )
         )

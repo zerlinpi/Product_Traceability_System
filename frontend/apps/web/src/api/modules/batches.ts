@@ -16,8 +16,14 @@ export interface BatchRecordFilters {
 }
 
 export default {
-  /** GET /api/production-batches */
-  productionBatches: () => api.get<AnyRecord[]>('/api/production-batches'),
+  /** GET /api/production-batches — bounded; pass productModelId to narrow it */
+  productionBatches: (filters: { productModelId?: number, limit?: number, offset?: number } = {}) => api.get<AnyRecord[]>('/api/production-batches', {
+    params: {
+      productModelId: filters.productModelId,
+      limit: filters.limit,
+      offset: filters.offset,
+    },
+  }),
   /** GET /api/production-batches/:id — flat batch dict + `registration` + `reverseTrace`. */
   productionBatch: (id: number) => api.get<AnyRecord>(`/api/production-batches/${id}`),
   /** POST /api/production-batches (ADMIN, WAREHOUSE) — idempotent scope `production-batches.create`. */

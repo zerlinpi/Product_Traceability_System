@@ -389,6 +389,44 @@ def _seeded_orders_app(tmp_path, count=6):
     return app, count, client
 
 
+def _batch_window_app(per_product: dict[int, int]):
+    """An app whose products own the given number of production batches each.
+
+    Batches are inserted directly rather than created through the API: the create
+    path demands an active trace plan with bound supplier inventory, which is a
+    different test's subject, and all of that is one INSERT away here.
+    """
+    database_path = Path(tempfile.mkdtemp(prefix="pts-batch-window-")) / "paged.db"
+    app = create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(database_path),
+            "NOW_PROVIDER": lambda: "2026-01-01T00:00:00",
+        }
+    )
+    client = app.test_client()
+    product_ids = {}
+    for index in per_product:
+        product = client.post(
+            "/api/products", json={"name": f"产品 {index}", "modelCode": f"PM-BW{index}"}
+        ).get_json()["data"]
+        product_ids[index] = product["id"]
+
+    connection = sqlite3.connect(str(database_path))
+    try:
+        for index, count in per_product.items():
+            for copy in range(count):
+                connection.execute(
+                    "INSERT INTO production_batches(batch_code, product_model_id, prefix, "
+                    "planned_quantity, generated_at) VALUES (?, ?, 'TW', 10, ?)",
+                    (f"PB-BW{index}-{copy}", product_ids[index], f"2026-01-0{index}T00:00:00"),
+                )
+        connection.commit()
+    finally:
+        connection.close()
+    return app, product_ids, sum(per_product.values())
+
+
 @pytest.mark.parametrize("endpoint", BOUNDED_ENDPOINTS)
 def test_asking_for_the_next_page_returns_the_next_rows(tmp_path, endpoint):
     """A window that does not move is a window that hides data.
@@ -512,3 +550,85 @@ def test_the_product_form_asks_the_server_for_each_part():
     assert "batchesByPart" in source
     # The client-side filter that this replaces: it must not come back.
     assert "inventoryBatches.value.filter(item => item.partTypeId" not in source
+
+
+def test_the_batch_list_is_bounded_and_filterable_by_product():
+    """The trace screen now asks for one product's batches, so both halves matter.
+
+    The endpoint returned every batch in the factory until now — one row per
+    batch, forever, downloaded on every visit to the trace page. It is windowed
+    like the others now, and filterable, because the page needs exactly one
+    product's rows and used to obtain them by taking the whole table and
+    filtering in the browser.
+
+    Five batches across two products: the unfiltered total is all of them, the
+    filtered response is only the asked-for product's, and the window still
+    applies on top of the filter.
+    """
+    app, product_ids, total = _batch_window_app({1: 2, 2: 3})
+    client = app.test_client()
+
+    everything = client.get("/api/production-batches")
+    assert int(everything.headers["X-Total-Count"]) == total
+
+    wanted = client.get(f"/api/production-batches?productModelId={product_ids[1]}")
+    rows = wanted.get_json()["data"]
+    assert int(wanted.headers["X-Total-Count"]) == 2, "过滤后的总数应按同一条件统计"
+    assert {row["productModelId"] for row in rows} == {product_ids[1]}
+    assert all(row["batchCode"] for row in rows), "行结构不应因过滤而改变"
+
+    # The window applies on top of the filter, not instead of it.
+    paged = client.get(f"/api/production-batches?productModelId={product_ids[2]}&limit=2")
+    assert len(paged.get_json()["data"]) == 2
+    assert int(paged.headers["X-List-Limit"]) == 2
+    assert int(paged.headers["X-Total-Count"]) == 3, "窗口不能改变总数"
+
+
+def test_the_product_carries_its_own_batch_count():
+    """The trace picker shows a count per product, from the product now.
+
+    That count used to be derived on the client from the full batch table. It
+    travels with the product instead, the way ``componentCount`` already does.
+    """
+    app, product_ids, _total = _batch_window_app({1: 3, 2: 0})
+    client = app.test_client()
+
+    listed = {
+        row["id"]: row
+        for row in client.get("/api/products").get_json()["data"]
+    }
+    assert listed[product_ids[1]]["productionBatchCount"] == 3
+    assert listed[product_ids[2]]["productionBatchCount"] == 0, "没有批次的产品应当是 0，不是缺失"
+
+    # The other caller of the same serializer — the PUT response — must agree.
+    # There is no GET-by-id, so this is the second path, and it is a second call
+    # site for the new field rather than a chance for the two to drift.
+    updated = client.put(
+        f"/api/products/{product_ids[1]}", json={"name": "改名后还是三个批次"}
+    )
+    assert updated.status_code == 200, updated.get_json()
+    assert updated.get_json()["data"]["productionBatchCount"] == 3
+
+
+def test_the_trace_page_asks_the_server_for_the_selected_product():
+    """The client-side filter must not come back.
+
+    It is the reason this round exists: filtering after the window means a
+    product whose batches are not in the window opens with an empty list, and the
+    operator is told a product has no trace when it does. Asserted against the
+    source because that is where the regression would live.
+    """
+    source = (
+        Path(__file__).resolve().parent.parent
+        / "frontend"
+        / "apps"
+        / "web"
+        / "src"
+        / "views"
+        / "trace"
+        / "index.vue"
+    ).read_text(encoding="utf-8")
+
+    assert "batches.value.filter(batch => batch.productModelId" not in source
+    assert "productionBatches({ productModelId: productId })" in source
+    assert "productionBatchCount" in source

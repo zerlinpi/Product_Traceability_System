@@ -13,6 +13,7 @@ require TRACE_VIEW.
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 from datetime import datetime
 
 from flask import Blueprint, Response, current_app, request
@@ -35,8 +36,10 @@ from traceability.codes import (
 )
 from traceability.db import get_db
 from traceability.errors import ApiError
+from traceability.validators import business_id
 from traceability.idempotent_http import run_idempotent
 from traceability.inventory import deduct_batch_inventory
+from traceability.pagination import parse_list_window
 from traceability.production import (
     production_batch_registration,
     production_batch_reverse_trace,
@@ -230,30 +233,55 @@ def list_production_batches():
     # the acting user id for scoped (warehouse) users.
     database = get_db()
     operator_id = current_operator_id()
+    # The trace screen opens one product at a time and used to download the whole
+    # table to find that product's batches, counting them in the browser. Asking
+    # for the product here removes that, and windows the query like the other
+    # list endpoints: this table gains a row per batch, forever, and until now
+    # this endpoint returned every one of them.
+    clauses: list[str] = []
+    parameters: list[Any] = []
+    product_value = request.args.get("productModelId")
+    if product_value not in {None, ""}:
+        clauses.append("pb.product_model_id = ?")
+        parameters.append(business_id(product_value, "产品"))
     # Join the product model columns so serialization needs no per-row
     # product lookup (see production_batch_dict).
-    if operator_id is None:
-        rows = database.execute(
-            """
-            SELECT pb.*, pm.model_code AS model_code, pm.name AS product_name
-            FROM production_batches pb
-            LEFT JOIN product_models pm ON pm.id = pb.product_model_id
-            ORDER BY pb.generated_at DESC, pb.id DESC
-            """
-        ).fetchall()
+    if operator_id is not None:
+        permission_clause = (
+            "JOIN user_product_model_permissions permission "
+            "ON permission.product_model_id = pb.product_model_id "
+            "AND permission.user_id = ?"
+        )
+        parameters.append(operator_id)
     else:
-        rows = database.execute(
-            """
-            SELECT pb.*, pm.model_code AS model_code, pm.name AS product_name
-            FROM production_batches pb
-            JOIN user_product_model_permissions permission
-                ON permission.product_model_id = pb.product_model_id
-            LEFT JOIN product_models pm ON pm.id = pb.product_model_id
-            WHERE permission.user_id = ?
-            ORDER BY pb.generated_at DESC, pb.id DESC
-            """,
-            (operator_id,),
-        ).fetchall()
+        permission_clause = ""
+    where_clause = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    window = parse_list_window()
+    rows = database.execute(
+        f"""
+        SELECT pb.*, pm.model_code AS model_code, pm.name AS product_name
+        FROM production_batches pb
+        {permission_clause}
+        LEFT JOIN product_models pm ON pm.id = pb.product_model_id
+        {where_clause}
+        ORDER BY pb.generated_at DESC, pb.id DESC
+        LIMIT ? OFFSET ?
+        """,
+        [*parameters, window.limit, window.offset],
+    ).fetchall()
+    # Counted separately, with the same WHERE, rather than with COUNT(*) OVER ()
+    # as the other list endpoints do: those select through the joined rows and
+    # the window function rides along, whereas here the row itself is computed
+    # from several queries below, so a second count is the honest option.
+    total = database.execute(
+        f"""
+        SELECT COUNT(*) AS n
+        FROM production_batches pb
+        {permission_clause}
+        {where_clause}
+        """,
+        parameters,
+    ).fetchone()["n"]
     # Resolve every batch's registration status in one query instead of one
     # lookup per batch (avoids an N+1 over batch_trace_records).
     registrations: dict[int, sqlite3.Row] = {}
@@ -279,7 +307,7 @@ def list_production_batches():
         )
         item["qualityStatus"] = registration["quality_status"] if registration else None
         payload.append(item)
-    return success(payload)
+    return window.apply(success(payload), total)
 
 @production_batches_bp.get("/api/production-batches/<int:batch_id>")
 def get_production_batch(batch_id: int):

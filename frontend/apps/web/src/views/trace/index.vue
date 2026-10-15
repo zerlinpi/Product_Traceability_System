@@ -56,10 +56,15 @@ const unitRecordCount = ref<number | null>(null)
 const unitRecords = ref<{ load: () => Promise<void> }>()
 
 const traceProduct = computed(() => products.value.find(item => item.id === traceProductId.value) ?? null)
-const traceBatches = computed(() => batches.value.filter(batch => batch.productModelId === traceProductId.value))
+
+/** The selected product's batches, already filtered by the server. */
+const traceBatches = computed(() => batches.value)
 
 function traceBatchCount(productId: unknown) {
-  return batches.value.filter(batch => batch.productModelId === productId).length
+  // The count comes with the product. It used to be derived by downloading
+  // every production batch in the factory and counting them here, which worked
+  // only while the endpoint returned the whole table.
+  return products.value.find(item => item.id === productId)?.productionBatchCount ?? 0
 }
 
 function batchRegistered(batch: AnyRecord) {
@@ -73,9 +78,8 @@ function batchQrUrl(batch: AnyRecord) {
 async function loadTrace() {
   loading.value = true
   try {
-    const [productList, batchList] = await Promise.all([catalogApi.products(), batchesApi.productionBatches()])
+    const productList = await catalogApi.products()
     products.value = productList ?? []
-    batches.value = batchList ?? []
     if (traceProductId.value !== null && !traceProduct.value) {
       renderTraceProducts()
     }
@@ -92,6 +96,11 @@ async function loadTrace() {
   }
 }
 
+/** Load the batches of one product. Called when a product is opened. */
+async function loadTraceBatches(productId: number) {
+  batches.value = await batchesApi.productionBatches({ productModelId: productId }) ?? []
+}
+
 // ---- product step ---------------------------------------------------------------
 
 function renderTraceProducts() {
@@ -106,6 +115,8 @@ function openTraceProduct(productId: number) {
   unitRecordCount.value = null
   activeTab.value = 'batches'
   traceProductId.value = productId
+  batches.value = []
+  void loadTraceBatches(productId)
 }
 
 /** 产品管理 detail of the product being browsed. */
