@@ -36,7 +36,7 @@ from traceability.codes import (
 )
 from traceability.db import get_db
 from traceability.errors import ApiError
-from traceability.validators import business_id
+from traceability.validators import business_id, clean_text
 from traceability.idempotent_http import run_idempotent
 from traceability.inventory import deduct_batch_inventory
 from traceability.pagination import parse_list_window
@@ -234,16 +234,28 @@ def list_production_batches():
     database = get_db()
     operator_id = current_operator_id()
     # The trace screen opens one product at a time and used to download the whole
-    # table to find that product's batches, counting them in the browser. Asking
-    # for the product here removes that, and windows the query like the other
-    # list endpoints: this table gains a row per batch, forever, and until now
-    # this endpoint returned every one of them.
+    # table to find that product's batches, counting them in the browser. The
+    # registration screen downloaded the same whole table to search it. Asking
+    # for the product, or the search term, removes both: and windows the query
+    # like the other list endpoints, because this table gains a row per batch,
+    # forever, and until now this endpoint returned every one of them.
     clauses: list[str] = []
     parameters: list[Any] = []
     product_value = request.args.get("productModelId")
     if product_value not in {None, ""}:
         clauses.append("pb.product_model_id = ?")
         parameters.append(business_id(product_value, "产品"))
+    # A search term, matched against the batch code and the product's name and
+    # code. Search is what the registration screen's box does, and it used to do
+    # it in the browser over the whole table — which only ever found matches
+    # inside whatever window happened to arrive.
+    search = clean_text(request.args.get("search"), "搜索", max_length=64)
+    if search:
+        clauses.append(
+            "(pb.batch_code LIKE ? OR pm.model_code LIKE ? OR pm.name LIKE ?)"
+        )
+        like = f"%{search}%"
+        parameters.extend([like, like, like])
     # Join the product model columns so serialization needs no per-row
     # product lookup (see production_batch_dict).
     if operator_id is not None:
@@ -278,6 +290,7 @@ def list_production_batches():
         SELECT COUNT(*) AS n
         FROM production_batches pb
         {permission_clause}
+        LEFT JOIN product_models pm ON pm.id = pb.product_model_id
         {where_clause}
         """,
         parameters,

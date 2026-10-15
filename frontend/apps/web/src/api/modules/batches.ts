@@ -16,10 +16,11 @@ export interface BatchRecordFilters {
 }
 
 export default {
-  /** GET /api/production-batches — bounded; pass productModelId to narrow it */
-  productionBatches: (filters: { productModelId?: number, limit?: number, offset?: number } = {}) => api.get<AnyRecord[]>('/api/production-batches', {
+  /** GET /api/production-batches — bounded; narrow it server-side */
+  productionBatches: (filters: { productModelId?: number, search?: string, limit?: number, offset?: number } = {}) => api.get<AnyRecord[]>('/api/production-batches', {
     params: {
       productModelId: filters.productModelId,
+      search: filters.search,
       limit: filters.limit,
       offset: filters.offset,
     },

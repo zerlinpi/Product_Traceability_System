@@ -6,6 +6,7 @@
  * `production-batches.create`).
  */
 import type { FormInstance, FormRules } from 'element-plus'
+import { useDebounceFn } from '@vueuse/core'
 import type { AnyRecord } from '@/api/types'
 import batchesApi from '@/api/modules/batches'
 import catalogApi from '@/api/modules/catalog'
@@ -22,13 +23,17 @@ const loading = ref(false)
 const batches = ref<AnyRecord[]>([])
 const search = ref('')
 
-const filtered = computed(() => {
-  const query = search.value.trim().toLowerCase()
-  if (!query) {
-    return batches.value
-  }
-  return batches.value.filter(batch => `${batch.batchCode ?? ''} ${batch.productName ?? ''} ${batch.prefix ?? ''}`.toLowerCase().includes(query))
-})
+/**
+ * Rows to show, as the server returned them.
+ *
+ * This used to filter the whole table here: `batches` held every production
+ * batch in the factory and the box narrowed it by text. That could only match
+ * rows that had arrived, and the rows are now a bounded window — so a search
+ * for an old batch found nothing while the batch existed. The term goes into
+ * the request instead, which is the only place the whole table is visible.
+ * `batches.length` is therefore the match count, not the factory's.
+ */
+const filtered = computed(() => batches.value)
 
 function isRegistered(batch: AnyRecord) {
   return Boolean(batch.registered ?? batch.registeredQuantity ?? batch.entry)
@@ -41,7 +46,7 @@ function qrUrl(batch: AnyRecord) {
 async function load() {
   loading.value = true
   try {
-    batches.value = await batchesApi.productionBatches()
+    batches.value = await batchesApi.productionBatches({ search: search.value.trim() }) ?? []
   }
   catch (error) {
     notifyError(error, '生产批次加载失败')
@@ -50,6 +55,12 @@ async function load() {
     loading.value = false
   }
 }
+
+// Typing in the box re-asks the server rather than narrowing a local copy,
+// debounced so a fast typist does not fire a request per keystroke. Same shape
+// as the trace screen's filter, which does the same thing for the same reason.
+const debouncedLoad = useDebounceFn(() => void load(), 300)
+watch(search, () => debouncedLoad())
 
 // ---- generate dialog --------------------------------------------------------
 

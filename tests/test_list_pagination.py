@@ -632,3 +632,57 @@ def test_the_trace_page_asks_the_server_for_the_selected_product():
     assert "batches.value.filter(batch => batch.productModelId" not in source
     assert "productionBatches({ productModelId: productId })" in source
     assert "productionBatchCount" in source
+
+
+def test_the_registration_search_happens_server_side():
+    """The search box has to see the whole table, not the window that arrived.
+
+    The registration screen keeps every production batch in the browser and
+    filters it by text. With a window in front, a search for an old batch finds
+    nothing — the operator types a code they know exists and the page says there
+    is no such batch. Sending the term with the request is the only fix, because
+    the server is the only side that can see past the window.
+    """
+    app, product_ids, _total = _batch_window_app({1: 3, 2: 2})
+    client = app.test_client()
+
+    # Matching by batch code is what the box's placeholder promises.
+    hit = client.get("/api/production-batches?search=PB-BW1-1")
+    rows = hit.get_json()["data"]
+    assert [row["batchCode"] for row in rows] == ["PB-BW1-1"], "按批次码搜索没有命中"
+
+    # ...and the term must not drag in the other product's rows.
+    assert {row["productModelId"] for row in rows} == {product_ids[1]}
+
+    # A term that matches nothing is an empty window, not everything.
+    miss = client.get("/api/production-batches?search=PB-DOES-NOT-EXIST")
+    assert miss.get_json()["data"] == []
+    assert int(miss.headers["X-Total-Count"]) == 0, "没命中时总数也应当是 0"
+
+    # A blank term is not a search: it must not filter anything out.
+    blank = client.get("/api/production-batches?search=")
+    assert int(blank.headers["X-Total-Count"]) == 5
+
+
+def test_the_registration_screen_asks_the_server_then_displaying_rows():
+    """And the page must stop filtering a local copy.
+
+    Asserted against the source, like the other two: the regression would live
+    in the component, not in the endpoint.
+    """
+    source = (
+        Path(__file__).resolve().parent.parent
+        / "frontend"
+        / "apps"
+        / "web"
+        / "src"
+        / "views"
+        / "batch-gen"
+        / "index.vue"
+    ).read_text(encoding="utf-8")
+
+    assert "batches.value.filter(batch =>" not in source, (
+        "又回到浏览器里过滤了——只有在窗口到达之后才会漏掉旧批次"
+    )
+    assert "productionBatches({ search:" in source
+    assert "useDebounceFn" in source, "搜索应防抖，否则每敲一字就是一次请求"
