@@ -686,3 +686,35 @@ def test_the_registration_screen_asks_the_server_then_displaying_rows():
     )
     assert "productionBatches({ search:" in source
     assert "useDebounceFn" in source, "搜索应防抖，否则每敲一字就是一次请求"
+
+
+def test_every_windowed_endpoint_has_a_notice_on_the_page_that_shows_it():
+    """A window nobody is told about is a window that hides data.
+
+    The endpoints report the real total in headers; the notice is what turns that
+    into a sentence an operator reads. Two pages were left without it after
+    production-batches became windowed — the trace screen, where an empty list
+    then reads as "this product has no batches", and the registration screen,
+    where a search that finds nothing reads as "no such batch". Both wrong
+    readings are the same shape: the operator concludes the data is absent.
+
+    Asserted against the source rather than by rendering, because the wiring is
+    the thing that goes missing.
+    """
+    views = Path(__file__).resolve().parent.parent / "frontend" / "apps" / "web" / "src" / "views"
+
+    # Endpoints that went through parse_list_window, and the page that lists them.
+    # supplier-inventory-batches is absent on purpose: its only consumer is the
+    # product form's batch picker, which is a dialog rather than a page.
+    for endpoint, page in (
+        ("/api/purchase-orders", "purchase-orders/index.vue"),
+        ("/api/production-orders", "production-orders/index.vue"),
+        ("/api/inbound-receipts", "inbound-receipts/index.vue"),
+        ("/api/batch-trace-records", "batch-quality/index.vue"),
+        ("/api/production-batches", "batch-gen/index.vue"),
+        ("/api/production-batches", "trace/index.vue"),
+    ):
+        source = (views / page).read_text(encoding="utf-8")
+        assert f'PtsListWindowNotice url="{endpoint}"' in source, (
+            f"{page} 列出了 {endpoint} 却没有接窗口提示——操作员会把截断看成数据缺失"
+        )

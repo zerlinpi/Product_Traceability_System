@@ -10,6 +10,7 @@ import { useDebounceFn } from '@vueuse/core'
 import type { AnyRecord } from '@/api/types'
 import batchesApi from '@/api/modules/batches'
 import catalogApi from '@/api/modules/catalog'
+import PtsListWindowNotice from '@/components/PtsListWindowNotice.vue'
 import { formatDate, qualityStatus } from '@/utils/format'
 import { notifyError, notifySuccess } from '@/utils/feedback'
 
@@ -151,6 +152,9 @@ onMounted(load)
         </div>
         <span class="pts-muted text-sm">显示 {{ filtered.length }} / {{ batches.length }}</span>
       </div>
+      <!-- The endpoint is windowed, so an operator who does not find a batch here
+           needs to be told the list is a window rather than the whole factory. -->
+      <PtsListWindowNotice url="/api/production-batches" />
       <ElTable v-loading="loading" :data="filtered" row-key="id" empty-text="尚未生成生产批次" stripe>
         <ElTableColumn label="批次码" min-width="220">
           <template #default="{ row }">

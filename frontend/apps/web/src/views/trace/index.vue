@@ -21,6 +21,7 @@ import { notifyError, notifyWarning } from '@/utils/feedback'
 import { formatDate, qualityStatus } from '@/utils/format'
 import GenealogyDialog from './components/GenealogyDialog.vue'
 import UnitRecords from './components/UnitRecords.vue'
+import PtsListWindowNotice from '@/components/PtsListWindowNotice.vue'
 import {
   batchGenealogyView,
   dateGroupRowClass,
@@ -422,6 +423,10 @@ onMounted(loadTrace)
             <p id="trace-filter-summary" class="pts-muted text-sm mt-0 mb-3" aria-live="polite">
               {{ batchSummary }}
             </p>
+            <!-- Batches arrive windowed, and the operator picks a product first —
+                 so an empty list here has two possible causes and only one of them
+                 is "this product has no batches". -->
+                  <PtsListWindowNotice url="/api/production-batches" />
             <ElTable
               id="trace-record-table"
               v-loading="loading"
