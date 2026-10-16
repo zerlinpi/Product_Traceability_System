@@ -7,6 +7,8 @@ from pathlib import Path
 
 from flask import current_app, g
 
+from traceability.idempotency import clear_in_progress, purge_expired
+from traceability.login_guard import to_epoch
 from traceability.audit_chain import (
     GENESIS_HASH,
     HASHED_FIELDS,
@@ -1739,8 +1741,26 @@ def initialize_database(app) -> None:
 
         _clear_abandoned_guards(connection)
         # A claim can only be held by a live request, so anything still
-        # 'in_progress' here belongs to a process that died mid-request.
-        _clear_abandoned_idempotency_claims(connection)
+        # 'in_progress' here belongs to a process that died mid-request. The
+        # functions live in idempotency.py, next to the ones that create and
+        # release claims — this used to be a private copy of that DELETE in this
+        # file, and two copies of one statement is how they drift.
+        cleared = clear_in_progress(connection)
+        # Completed keys are kept a week so a retry can still replay them. Nothing
+        # enforced that window: the front end mints a fresh key per write and
+        # clears it on success, so every successful idempotent write left a row
+        # behind for good. The table therefore grew with the factory's write
+        # volume, in a deployment that restarts rarely, while the function
+        # written to bound it was only ever called by its own test.
+        purged = purge_expired(
+            connection, now_epoch=to_epoch(app.config["NOW_PROVIDER"]())
+        )
+        if cleared or purged:
+            # Said once, at startup, where an operator who just restarted will
+            # see it — not per row, which would be noise.
+            print(  # noqa: T201 — startup diagnostics go to the server log
+                f"启动清理：释放 {cleared} 个残留幂等声明，清除 {purged} 条过期已完成记录"
+            )
     finally:
         connection.close()
 
@@ -1769,23 +1789,6 @@ def _backfill_audit_chain(connection: sqlite3.Connection) -> None:
             (previous, digest, row["id"]),
         )
         previous = digest
-
-
-def _clear_abandoned_idempotency_claims(connection: sqlite3.Connection) -> None:
-    """Release idempotency claims stranded by a crash.
-
-    The deterministic counterpart to the timeout-based handling in the route
-    layer, matching ``_clear_abandoned_guards``. Without it a process killed
-    between claiming a key and completing it would answer 409 to every retry
-    forever, requiring manual DB surgery.
-    """
-    connection.execute("BEGIN IMMEDIATE")
-    try:
-        connection.execute("DELETE FROM idempotency_keys WHERE state = 'in_progress'")
-        connection.execute("COMMIT")
-    except Exception:
-        connection.execute("ROLLBACK")
-        raise
 
 
 def _clear_abandoned_guards(connection: sqlite3.Connection) -> None:

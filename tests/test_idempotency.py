@@ -497,3 +497,120 @@ def test_the_unique_constraint_is_on_key_and_scope_together(tmp_path):
             )
     finally:
         database.close()
+
+
+def test_a_completed_key_is_purged_once_it_is_past_the_window(tmp_path):
+    """The retention window has to be enforced, not just documented.
+
+    ``purge_expired`` existed with a seven-day window and its own test, and was
+    called by nothing. Every successful idempotent write therefore left a row
+    behind for good — the front end mints a fresh key per write and clears it on
+    success — so the table grew with the factory's write volume in any deployment
+    that restarts rarely. It is a small row, which is exactly why it went
+    unnoticed.
+    """
+    app, database_path, _fake = make_auth_app(tmp_path)
+    database = connect_database(database_path)
+    try:
+        # Two completed keys: one a week old, one from today.
+        idempotency.claim(
+            database,
+            key="old-key-0001",
+            scope="scan-gun.inbound",
+            request_fingerprint="x",
+            actor_user_id=None,
+            started_at=FIXED_NOW,
+        )
+        idempotency.complete(
+            database,
+            key="old-key-0001",
+            scope="scan-gun.inbound",
+            status_code=200,
+            body={"ok": True, "data": None},
+            completed_at=FIXED_NOW,
+        )
+    finally:
+        database.close()
+
+    # Age the old row past the retention window, then restart.
+    connection = connect_database(database_path)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        connection.execute(
+            "UPDATE idempotency_keys SET completed_at = ? WHERE idempotency_key = 'old-key-0001'",
+            ("2020-01-01T00:00:00+08:00",),
+        )
+        connection.execute("COMMIT")
+    finally:
+        connection.close()
+
+    from app import create_app
+
+    create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(database_path),
+            "SECRET_KEY": "idempotency-purge",
+            "NOW_PROVIDER": lambda: FIXED_NOW,
+        }
+    )
+
+    connection = connect_database(database_path)
+    try:
+        remaining = connection.execute(
+            "SELECT COUNT(*) FROM idempotency_keys WHERE idempotency_key = 'old-key-0001'"
+        ).fetchone()[0]
+        assert remaining == 0, "超过保留期的已完成记录没有被清除"
+        # The recent one must survive — the window is a retention, not a wipe.
+        assert idempotency.lookup(connection, "old-key-0001", "scan-gun.inbound") is None
+    finally:
+        connection.close()
+
+
+def test_a_recent_completed_key_survives_the_startup_purge(tmp_path):
+    """The other half: purging must not eat the keys a retry still needs.
+
+    A retry arriving seconds after the original is the whole point of the
+    mechanism, so the window has to keep today's keys while it drops last
+    month's.
+    """
+    app, database_path, _fake = make_auth_app(tmp_path)
+    database = connect_database(database_path)
+    try:
+        idempotency.claim(
+            database,
+            key="fresh-key-0001",
+            scope="scan-gun.inbound",
+            request_fingerprint="x",
+            actor_user_id=None,
+            started_at=FIXED_NOW,
+        )
+        idempotency.complete(
+            database,
+            key="fresh-key-0001",
+            scope="scan-gun.inbound",
+            status_code=200,
+            body={"ok": True, "data": None},
+            completed_at=FIXED_NOW,
+        )
+    finally:
+        database.close()
+
+    from app import create_app
+
+    create_app(
+        {
+            "TESTING": True,
+            "DATABASE": str(database_path),
+            "SECRET_KEY": "idempotency-fresh",
+            "NOW_PROVIDER": lambda: FIXED_NOW,
+        }
+    )
+
+    database = connect_database(database_path)
+    try:
+        row = idempotency.lookup(database, "fresh-key-0001", "scan-gun.inbound")
+        assert row is not None, "刚完成的记录被误删了——重放会失效"
+        assert row["status_code"] == 200
+    finally:
+        database.close()

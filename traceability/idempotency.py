@@ -24,9 +24,13 @@ runs. The insert is the mutual exclusion. A duplicate therefore either replays a
 finished result or is told the original is still in flight — it never runs twice.
 
 This mirrors the guard the Lingxing push already uses (``push_in_progress`` plus
-``push_started_at``), so there is one recovery story rather than two:
-``clear_in_progress`` runs at startup alongside ``_clear_abandoned_guards``,
-because a claim can only be held by a live request.
+``push_started_at``), so there is one recovery story rather than two.
+``clear_in_progress`` and ``purge_expired`` both run at startup, from
+``initialize_database``, alongside ``_clear_abandoned_guards``: a claim can only
+be held by a live request, and completed keys only need to outlive a week of
+retries. This module used to carry a private copy of the stranded-claim cleanup
+in ``db.py``; keeping one copy here, next to the functions that write the rows,
+is what stops the two drifting.
 
 This module deliberately has **no Flask dependency**, matching
 ``traceability/capabilities.py``, so it can be tested and reasoned about
