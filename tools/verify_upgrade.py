@@ -49,6 +49,13 @@ NOW = "2026-10-17T13:00:00+08:00"
 #: drift apart silently.
 CURRENT_VERSION = 24
 
+#: Row counts per table, read from the original before anything touches it. A
+#: migration that widened a CHECK but dropped rows would otherwise pass every
+#: check here, and the empty tables in a sparse deployment database make that
+#: easy to miss.
+#: Tables the v23/v24 migrations rebuild, and what makes each worth checking.
+REBUILT_TABLES = ("purchase_orders", "inbound_receipts", "product_stock_sync")
+
 
 def _app_for(path: Path):
     return create_app(
@@ -75,7 +82,7 @@ class Results:
         return all(ok for _label, ok, _detail in self.rows)
 
 
-def run_checks(dst: Path, before: int) -> Results:
+def run_checks(dst: Path, before: int, before_rows: dict[str, int]) -> Results:
     """Migrate the copy and check it, having read its *original* version first.
 
     Two ordering traps, both hit while writing this:
@@ -97,9 +104,34 @@ def run_checks(dst: Path, before: int) -> Results:
     probe = connect_database(str(dst))
     version = probe.execute("PRAGMA user_version").fetchone()[0]
     integrity = probe.execute("PRAGMA integrity_check").fetchone()[0]
-    probe.close()
     results.check("升级到当前版本", version == CURRENT_VERSION, f"{before} → {version}")
     results.check("integrity_check 干净", integrity == "ok")
+
+    # The migrations rebuild tables to widen a CHECK constraint. Assert the
+    # constraint actually widened and the rows came with it — without this the
+    # tool passes even when the rebuild is skipped, which is exactly what an
+    # ablation of _rebuild_product_stock_sync_v24 showed: 7/7 on a database whose
+    # CHECK was still three-valued, because nothing here looked at a CHECK.
+    #
+    # Read before the connection closes, and while it is still the migrated one.
+    for table in REBUILT_TABLES:
+        row = probe.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        widened = bool(row) and "NEEDS_REVIEW" in row[0]
+        results.check(
+            f"{table} 的 CHECK 已放宽为四值",
+            widened,
+            "" if widened else "仍为三值——重建没有发生",
+        )
+        if before_rows.get(table):
+            after = probe.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            results.check(
+                f"{table} 的 {before_rows[table]} 行数据随之保留",
+                after == before_rows[table],
+                f"升级前 {before_rows[table]} 行，升级后 {after} 行",
+            )
+    probe.close()
 
     client = _app_for(dst).test_client()
 
@@ -187,12 +219,17 @@ def main() -> int:
 
     original = sqlite3.connect(f"file:{source}?mode=ro", uri=True)
     before = original.execute("PRAGMA user_version").fetchone()[0]
+    before_rows = {
+        table: original.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        for table in REBUILT_TABLES
+    }
     original.close()
     print(f"源库：{source}")
     print(f"  升级前 user_version = {before}")
+    print(f"  迁移目标表现有行数：{before_rows}")
     print(f"副本：{dst}\n")
 
-    results = run_checks(dst, before)
+    results = run_checks(dst, before, before_rows)
 
     passed = sum(1 for _label, ok, _detail in results.rows if ok)
     print(f"\n{'=' * 46}")
