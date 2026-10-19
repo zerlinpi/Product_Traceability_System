@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -143,6 +144,43 @@ def write_build_info() -> str:
     return fingerprint
 
 
+def _committed_bundle_is_clean() -> list[str]:
+    """Files under static/dist that differ from what git has recorded.
+
+    The fingerprint above says the bundle was built from the current source. It
+    says nothing about whether the files *sitting in the working tree* are those
+    files: a half-finished build, or someone editing served output by hand,
+    changes the bundle with the fingerprint untouched. Removing a stale asset,
+    or hand-patching index.html, both produced a green gate — which is the one
+    case this check exists to catch, since the served front end is the product.
+
+    Compared through git rather than by hashing a directory: the objects in the
+    index are the ones a clone would serve, and that is the thing to agree with.
+    """
+    listed = subprocess.run(
+        ["git", "ls-files", "-z", "--", "static/dist"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        # Not a git checkout (a tarball, say) — nothing to compare against, and
+        # the fingerprint check above still stands.
+        return []
+
+    dirty = subprocess.run(
+        ["git", "diff", "--name-only", "-z", "--", "static/dist"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if dirty.returncode != 0:
+        return []
+    return [name for name in dirty.stdout.split("\0") if name]
+
+
 def main() -> int:
     if not ENTRY.is_file():
         print(
@@ -165,6 +203,18 @@ def main() -> int:
 
     if expected == actual:
         print(f"已提交的 bundle 与当前源码一致（{recorded.get('sourceFileCount')} 个源文件）。")
+        dirty = _committed_bundle_is_clean()
+        if dirty:
+            print("", file=sys.stderr)
+            print("但 static/dist 里有文件与 git 记录不一致：", file=sys.stderr)
+            for name in dirty[:10]:
+                print(f"  - {name}", file=sys.stderr)
+            if len(dirty) > 10:
+                print(f"  …另 {len(dirty) - 10} 个", file=sys.stderr)
+            print("", file=sys.stderr)
+            print("前端产物必须是构建的结果，不能手改。请重新构建并提交：", file=sys.stderr)
+            print("    python tools/build_frontend.py && git add static/dist", file=sys.stderr)
+            return 1
         return 0
 
     print("已提交的 bundle 不是由当前源码构建的。", file=sys.stderr)
