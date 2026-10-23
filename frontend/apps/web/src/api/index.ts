@@ -7,8 +7,10 @@
  * - field-facing writes are idempotent: the client sends an `Idempotency-Key`
  *   and keeps the same key for a retry after a network failure or a 5xx, so
  *   a scanner that double-submits (or a flaky LAN) replays instead of
- *   duplicating stock. A 4xx is a definitive rejection with nothing written,
- *   so the key is dropped and the next attempt starts fresh;
+ *   duplicating stock. The key is kept in sessionStorage as well as memory, so
+ *   it also survives the reload an operator does when a page hangs. A 4xx is a
+ *   definitive rejection with nothing written, so the key is dropped and the
+ *   next attempt starts fresh;
  * - 401 means the session is gone (back to the login page), 428 means the
  *   account must change its initial password first.
  *
@@ -84,24 +86,70 @@ const NETWORK_ERROR_MESSAGE = '网络连接失败，请检查网络后重试'
 
 const pendingIdempotencyKeys = new Map<string, string>()
 
+// A key has to outlive the page it was minted on. The header comment promises a
+// retry after a network failure or a 5xx replays instead of duplicating stock —
+// but on a factory floor the operator's first response to a hung page is to
+// reload it, and a module-level map dies with the page. The second submit then
+// carried a fresh key, and the server had no way to know it was the same scan.
+//
+// sessionStorage is per-tab, which is the right scope: a new tab is a new
+// operator action, and the server's own retention window bounds how long a
+// replay is honoured anyway. Storage can refuse (private mode, quota) — the
+// in-memory map above still serves the current page, so the failure mode of
+// writing is exactly the behaviour we had before.
+const IDEMPOTENCY_STORAGE_KEY = "pts.pending-idempotency-keys"
+
+function storedKeys(): Record<string, string> {
+  try {
+    return JSON.parse(sessionStorage.getItem(IDEMPOTENCY_STORAGE_KEY) ?? "{}")
+  }
+  catch {
+    return {}
+  }
+}
+
+function rememberKey(scope: string, key: string) {
+  try {
+    const keys = storedKeys()
+    keys[scope] = key
+    sessionStorage.setItem(IDEMPOTENCY_STORAGE_KEY, JSON.stringify(keys))
+  }
+  catch {
+    // Nothing to do: the page still has the key in memory.
+  }
+}
+
+function forgetKey(scope: string) {
+  try {
+    const keys = storedKeys()
+    delete keys[scope]
+    sessionStorage.setItem(IDEMPOTENCY_STORAGE_KEY, JSON.stringify(keys))
+  }
+  catch {
+    // As above.
+  }
+}
+
 function newIdempotencyKey() {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
     return `pts-${crypto.randomUUID()}`
   }
   return `pts-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
 }
 
 export function idempotencyKeyFor(scope: string) {
-  let key = pendingIdempotencyKeys.get(scope)
+  let key = pendingIdempotencyKeys.get(scope) ?? storedKeys()[scope]
   if (!key) {
     key = newIdempotencyKey()
-    pendingIdempotencyKeys.set(scope, key)
   }
+  pendingIdempotencyKeys.set(scope, key)
+  rememberKey(scope, key)
   return key
 }
 
 export function clearIdempotencyKey(scope: string) {
   pendingIdempotencyKeys.delete(scope)
+  forgetKey(scope)
 }
 
 // ---- Session hooks (wired by the account store) ----------------------------

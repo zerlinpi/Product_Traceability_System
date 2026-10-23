@@ -82,8 +82,11 @@ async function newPage(browser, viewport = { width: 1440, height: 900 }) {
   return { context, page, events }
 }
 
-function drain(events, label) {
-  const relevant = events.filter(item => !/status of 401|\/api\/auth\/me/.test(item))
+function drain(events, label, ignore) {
+  const expected = /status of 401|\/api\/auth\/me/
+  const relevant = events.filter(
+    item => !expected.test(item) && !(ignore && ignore.test(item))
+  )
   for (const item of relevant) {
     fail(`${label}: ${item}`)
   }
@@ -142,6 +145,85 @@ try {
       }
       events.length = 0
     }
+    await context.close()
+  }
+
+  // The idempotency key has to outlive the page it was minted on. An operator
+  // whose submit died on a flaky factory LAN reloads the page — it is the first
+  // thing anyone does with a hung screen — and a key that died with the page
+  // turns that second submit into a new write. Observed by aborting the first
+  // POST at the network layer, reloading, submitting again, and comparing the
+  // Idempotency-Key the two requests carried.
+  console.log('▶ idempotency key survives a reload')
+  {
+    const { context, page, events } = await newPage(browser)
+    await login(page, ROLES[0])
+    drain(events, 'idempotency/login')
+
+    const keys = []
+    await page.route('**/api/production-batches', async (route, request) => {
+      if (request.method() !== 'POST') {
+        return route.fallback()
+      }
+      keys.push(request.headers()['idempotency-key'] ?? '')
+      // The first submit never reaches the server, exactly as a dropped
+      // connection looks from the browser.
+      if (keys.length === 1) {
+        return route.abort('connectionfailed')
+      }
+      return route.fallback()
+    })
+
+    const submitGenerate = async () => {
+      await page.goto(`${BASE}/#/batch-gen`, { waitUntil: 'networkidle' })
+      // The seeded catalogue holds one product with a production plan and one
+      // without; picking the first dropdown entry lands on the second and the
+      // create is rejected with 409 before any of this is observable. So ask the
+      // API which product can actually be turned into a batch.
+      const wanted = await page.evaluate(async () => {
+        const response = await fetch('/api/products', { credentials: 'include' })
+        const body = await response.json()
+        const product = (body.data ?? []).find(item => (item.componentCount ?? 0) > 0)
+        return product?.name ?? ''
+      })
+      if (!wanted) {
+        fail('idempotency: no seeded product has components to generate from')
+        return
+      }
+      await page.click('#open-batch-generate-modal')
+      await page.waitForSelector('#batch-generate-form')
+      await page.click('#batch-generate-form .el-select')
+      const option = page.locator('.el-select-dropdown:visible .el-select-dropdown__item', { hasText: wanted })
+      await option.first().waitFor({ state: 'visible', timeout: 10000 })
+      await option.first().click()
+      await page.fill('#batch-generate-form input[placeholder="例如：TW04-A"]', 'ZZ')
+      await page.click('.el-dialog__footer button.el-button--primary')
+    }
+
+    await submitGenerate()
+    await page.waitForTimeout(1500)
+    if (keys.length !== 1) {
+      fail(`idempotency: expected the first submit to fire one POST, saw ${keys.length}`)
+    }
+
+    // The operator's response to a hung page.
+    await page.reload({ waitUntil: 'networkidle' })
+    await submitGenerate()
+    await page.waitForTimeout(2500)
+
+    if (keys.length < 2) {
+      fail(`idempotency: the submit after the reload fired no POST (saw ${keys.length})`)
+    }
+    else if (keys[0] !== keys[1]) {
+      fail(`idempotency: key changed across the reload — ${keys[0]} then ${keys[1]}`)
+    }
+    else {
+      console.log(`  ✓ same Idempotency-Key before and after the reload (${keys[0].slice(0, 20)}…)`)
+    }
+    // The aborted request is this scenario's own doing: the browser logs the
+    // connection failure it was told to produce, and that log is the point of
+    // the exercise rather than a defect. Everything else is still checked.
+    drain(events, 'idempotency/submit', /ERR_CONNECTION_FAILED/)
     await context.close()
   }
 
