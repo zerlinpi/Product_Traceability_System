@@ -718,3 +718,35 @@ def test_every_windowed_endpoint_has_a_notice_on_the_page_that_shows_it():
         assert f'PtsListWindowNotice url="{endpoint}"' in source, (
             f"{page} 列出了 {endpoint} 却没有接窗口提示——操作员会把截断看成数据缺失"
         )
+
+
+def test_every_input_driven_load_ignores_stale_responses():
+    """A response that arrives after a newer one must not be applied.
+
+    Every filter box that re-asks the server overlaps its own requests. Debounce
+    limits how often; only a sequence number decides which answer lands. Without
+    one, a slow request for an earlier query lands last and the operator reads
+    rows they have already typed past — on the quality screen that means a release
+    decision made on stale records, and on the batch detail screen it means the
+    wrong batch's codes and QR.
+
+    The pattern the project already uses lives in UnitRecords.vue. Asserted
+    against the source because the guard is one line and it is exactly the kind
+    of line a refactor drops.
+    """
+    views = (
+        Path(__file__).resolve().parent.parent / "frontend" / "apps" / "web" / "src" / "views"
+    )
+
+    # (file, the load the watch drives) — these are every watch whose handler
+    # reaches the network. applyBatchFilters in the trace screen is absent on
+    # purpose: it only assigns local reactive state, and the records it changes
+    # are fetched by UnitRecords.vue, which has the guard.
+    for page in ("batch-gen/index.vue", "batch-gen/detail.vue", "batch-quality/index.vue", "trace/components/UnitRecords.vue"):
+        source = (views / page).read_text(encoding="utf-8")
+        # The idiom, not the word: a file that merely mentions "sequence" passes
+        # nothing. The guard is the comparison that discards a stale answer.
+        assert "!== loadSequence" in source, (
+            f"{page} 的加载函数没有响应序号防护——乱序响应会覆盖新结果"
+        )
+

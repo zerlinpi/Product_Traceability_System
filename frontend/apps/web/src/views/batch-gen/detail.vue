@@ -34,19 +34,34 @@ const summary = computed(() => {
   ]
 })
 
+// The route param changes when the operator moves between batches, and a load
+// still in flight for the previous one must not land last: this page shows the
+// batch's codes and its QR link, so the wrong batch's data here is the wrong
+// codes being printed. Same sequence guard UnitRecords.vue already uses.
+let loadSequence = 0
+
 async function load() {
   if (!Number.isInteger(batchId.value) || batchId.value <= 0) {
     return
   }
+  const sequence = ++loadSequence
   loading.value = true
   try {
-    batch.value = await batchesApi.productionBatch(batchId.value)
+    const detail = await batchesApi.productionBatch(batchId.value)
+    if (sequence !== loadSequence) {
+      return
+    }
+    batch.value = detail
   }
   catch (error) {
-    notifyError(error, '批次详情加载失败')
+    if (sequence === loadSequence) {
+      notifyError(error, '批次详情加载失败')
+    }
   }
   finally {
-    loading.value = false
+    if (sequence === loadSequence) {
+      loading.value = false
+    }
   }
 }
 

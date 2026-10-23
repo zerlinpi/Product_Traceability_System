@@ -44,16 +44,34 @@ function qrUrl(batch: AnyRecord) {
   return batch.downloadUrl || batchesApi.productionBatchQrUrl(batch.id)
 }
 
+// Responses that arrive out of order must not win. Typing a batch code fires a
+// request per debounced change, and a slow earlier one landing after a fast
+// later one would show rows for a query the operator has already typed past —
+// on a screen whose whole job is to find the batch behind the code, that is how
+// the wrong batch gets picked. The same sequence guard UnitRecords.vue already
+// uses, for the same reason.
+let loadSequence = 0
+
 async function load() {
+  const sequence = ++loadSequence
   loading.value = true
   try {
-    batches.value = await batchesApi.productionBatches({ search: search.value.trim() }) ?? []
+    const list = await batchesApi.productionBatches({ search: search.value.trim() })
+    if (sequence !== loadSequence) {
+      return
+    }
+    batches.value = list ?? []
   }
   catch (error) {
-    notifyError(error, '生产批次加载失败')
+    // A stale failure is not the operator's problem: they have typed on.
+    if (sequence === loadSequence) {
+      notifyError(error, '生产批次加载失败')
+    }
   }
   finally {
-    loading.value = false
+    if (sequence === loadSequence) {
+      loading.value = false
+    }
   }
 }
 

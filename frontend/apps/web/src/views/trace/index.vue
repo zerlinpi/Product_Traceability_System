@@ -97,9 +97,19 @@ async function loadTrace() {
   }
 }
 
+// Opening products in quick succession overlaps two requests, and the older
+// product's batches must not land last: the operator would be looking at
+// another product's trace. Same sequence guard UnitRecords.vue already uses.
+let traceBatchSequence = 0
+
 /** Load the batches of one product. Called when a product is opened. */
 async function loadTraceBatches(productId: number) {
-  batches.value = await batchesApi.productionBatches({ productModelId: productId }) ?? []
+  const sequence = ++traceBatchSequence
+  const list = await batchesApi.productionBatches({ productModelId: productId }) ?? []
+  if (sequence !== traceBatchSequence) {
+    return
+  }
+  batches.value = list
 }
 
 // ---- product step ---------------------------------------------------------------

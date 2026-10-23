@@ -31,7 +31,14 @@ function isActionable(record: AnyRecord) {
   return (record.qualityStatus || 'ASSEMBLED') === 'ASSEMBLED'
 }
 
+// Both filters re-ask the server, so their responses can arrive out of order.
+// Quality records shown stale are worse than an empty table: the operator makes
+// a release decision on what they read. Same sequence guard UnitRecords.vue
+// already uses.
+let loadSequence = 0
+
 async function load() {
+  const sequence = ++loadSequence
   const { batchCode, from, to } = filters
   if (from && to && from > to) {
     notifyError('开始时间不能晚于结束时间', '筛选时间无效')
@@ -39,12 +46,16 @@ async function load() {
   }
   loading.value = true
   try {
-    records.value = await batchesApi.batchTraceRecords({
+    const list = await batchesApi.batchTraceRecords({
       batchCode: batchCode.trim(),
       from,
       // Stored timestamps carry a time of day; make the end date inclusive.
       to: to ? `${to}T23:59:59.999999` : '',
     })
+    if (sequence !== loadSequence) {
+      return
+    }
+    records.value = list
     const summary = [`${records.value.length} 条记录`]
     if (batchCode.trim()) {
       summary.push(`批次码 ${batchCode.trim()}`)
@@ -55,10 +66,14 @@ async function load() {
     appliedSummary.value = summary.join(' · ')
   }
   catch (error) {
-    notifyError(error, '批次登记记录加载失败')
+    if (sequence === loadSequence) {
+      notifyError(error, '批次登记记录加载失败')
+    }
   }
   finally {
-    loading.value = false
+    if (sequence === loadSequence) {
+      loading.value = false
+    }
   }
 }
 
