@@ -778,6 +778,14 @@ def prune_backups(
     archive behind would keep the images alive but orphaned — invisible to
     ``list_backups``, so nothing would ever clean them up, and the backup
     directory would grow without bound.
+
+    The ``-shm`` and ``-wal`` sidecars go for the same reason, which is the same
+    sentence said about a different file: ``list_backups`` globs ``*.db`` and
+    cannot see them, so whatever outlives the database it belonged to outlives it
+    forever. They appear whenever a backup is opened — verifying one is enough,
+    because a read-only connection to a WAL database still maps the shared-memory
+    index — and the ones found in a real backup directory were all zero bytes,
+    which is why nobody noticed them growing. Three per pruned backup, quietly.
     """
     backups = list_backups(backup_dir, prefix=prefix)
     if keep < 0:
@@ -791,6 +799,10 @@ def prune_backups(
         archive = image_archive_path(path)
         if archive.exists():
             archive.unlink()
+        for suffix in ("-shm", "-wal"):
+            sidecar = path.with_name(path.name + suffix)
+            if sidecar.exists():
+                sidecar.unlink()
         path.unlink()
         removed.append(path)
     return removed

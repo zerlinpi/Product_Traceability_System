@@ -348,6 +348,43 @@ def test_pruning_removes_the_archive_with_its_backup(live):
     assert list_backups(directory) == [second.path]
 
 
+def test_pruning_removes_the_sidecars_with_its_backup(live):
+    """The same orphan, in a different file.
+
+    ``list_backups`` globs ``*.db``, so a ``-shm`` or ``-wal`` left beside a
+    pruned database is invisible to everything that lists or cleans backups — the
+    exact sentence the archive test above makes about image archives, said about
+    the sidecars instead. They are not hypothetical: three zero-byte ``-wal``
+    files were sitting in a real backup directory, left by opening a backup to
+    verify it, which is enough because a read-only connection to a WAL database
+    still maps the shared-memory index.
+
+    Deleting the database and keeping its sidecars means the directory grows by
+    two files per pruned backup forever, and no command in the project can see
+    them to clean them up.
+    """
+    _database, _images = live
+    database_path, _images = live
+    directory = database_path.parent / "backups"
+    first = create_backup(database_path, directory, created_at="2026-10-08T09:00:00")
+    second = create_backup(database_path, directory, created_at="2026-10-08T10:00:00")
+
+    # The state a verified backup is left in: sidecars beside both databases.
+    for report in (first, second):
+        for suffix in ("-shm", "-wal"):
+            report.path.with_name(report.path.name + suffix).write_bytes(b"")
+
+    prune_backups(directory, keep=1)
+
+    for suffix in ("-shm", "-wal"):
+        assert not first.path.with_name(first.path.name + suffix).exists(), (
+            f"被删备份的 {suffix} 伴生文件留下了——目录会无界增长"
+        )
+        assert second.path.with_name(second.path.name + suffix).is_file(), (
+            f"保留那份的 {suffix} 被误删"
+        )
+
+
 # --------------------------------------------------------------------------
 # End to end, through the database the application actually writes
 # --------------------------------------------------------------------------
