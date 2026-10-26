@@ -116,6 +116,7 @@ sudo systemctl start product-traceability
 
 | 版本 | 内容 |
 | --- | --- |
+| v11 | 基线：早期独立版本建出的库到此打标，**无结构变化**。启动日志里出现它不代表改了表 |
 | v12 | 批次溯源 |
 | v13 | 领星采购 / 入库结构；重建角色表 |
 | v14 | 三角色收敛（`OPERATOR` → `WAREHOUSE`）、设置、生产订单、成品库存 |
@@ -127,8 +128,15 @@ sudo systemctl start product-traceability
 | v20 | 幂等键表 |
 | v21 | 审计日志改为只追加哈希链（含历史回填） |
 | v22 | 登录失败计数表（登录限流） |
+| v23 | 「结果未知」状态：重建 `purchase_orders` 与 `inbound_receipts`，`sync_status` 的 CHECK 由三值放宽为四值（增加 `NEEDS_REVIEW`）。SQLite 改不了 CHECK，所以两张表整体重建，列与索引原样搬移、既有行不受影响 |
+| v24 | 同理重建 `product_stock_sync`：库存同步也有了自己的「结果未知」 |
 
 完整说明见 [`DATA_MODEL.md`](DATA_MODEL.md) 第 1 节。
+
+> **部署库若停在 v22**，下次启动会连续执行 v23 与 v24、重建三张表。
+> 这两步已在 `data/traceability.db` 的副本上实测：升级后 `integrity_check` 干净、
+> 无外键违规、既有行一条不少、三张表的 CHECK 均已放宽。
+> 升级前请先按上面第 1 步做一份 `preflight` 备份。
 
 ### 降级保护
 

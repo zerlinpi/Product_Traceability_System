@@ -567,3 +567,54 @@ def test_the_listing_is_read_back_as_utf8(monkeypatch, tmp_path):
         "docs/knowledge-base/快速开始.md",
         "docs/DATA_MODEL.md",
     ], "中文路径必须原样返回"
+
+
+def test_a_migration_missing_from_the_upgrade_guide_is_caught(monkeypatch):
+    """v23 and v24 both shipped while the guide's chain ended at v22.
+
+    That is the drift this check exists for, and it is worse than the prose
+    checks above: those pin the terminal version a running system reports, while
+    the chain table is what an operator reads to decide whether to upgrade. The
+    deployment database sits at v22, so the two migrations missing from the table
+    are exactly the two that were about to run.
+    """
+    from traceability.db import SCHEMA_VERSION
+
+    upgrade = (ROOT / "docs/UPGRADE.md").read_text(encoding="utf-8")
+    trimmed = "\n".join(
+        line for line in upgrade.splitlines() if not line.startswith(f"| v{SCHEMA_VERSION} |")
+    )
+    assert trimmed != upgrade, "前置条件不成立：表里没有最后那一行"
+    _patch_read(monkeypatch, {"docs/UPGRADE.md": trimmed})
+
+    checker.check_migration_chain()
+
+    assert checker.failures, "迁移缺行未被发现"
+    message = " ".join(checker.failures)
+    assert "UPGRADE.md" in message
+    assert str(SCHEMA_VERSION) in message, "报告里应带上代码实际的版本"
+
+
+def test_a_migration_row_with_no_migration_behind_it_is_caught(monkeypatch):
+    """The other direction: a version the code never writes.
+
+    A table can also drift by claiming more than the code does, which reads as a
+    migration that exists and misleads anyone diffing the chain against the
+    release notes.
+    """
+    from traceability.db import SCHEMA_VERSION
+
+    upgrade = (ROOT / "docs/UPGRADE.md").read_text(encoding="utf-8")
+    invented = upgrade.replace(
+        "| 版本 | 内容 |",
+        f"| 版本 | 内容 |\n| v{SCHEMA_VERSION + 1} | 并不存在的迁移 |",
+        1,
+    )
+    _patch_read(monkeypatch, {"docs/UPGRADE.md": invented})
+
+    checker.check_migration_chain()
+
+    assert checker.failures, "虚构的迁移行未被发现"
+    assert any(
+        "没有对应的迁移" in item for item in checker.failures
+    ), "报告应说明代码里找不到该迁移"

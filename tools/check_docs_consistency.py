@@ -102,6 +102,76 @@ def check_schema_version() -> None:
         )
 
 
+def check_migration_chain() -> None:
+    """Every migration the code runs must be listed in the upgrade guide.
+
+    The two prose checks above pin the *terminal* version, which is what a
+    running system reports. The chain table in UPGRADE.md is a different claim:
+    it is what an operator reads to decide whether to upgrade, and it goes stale
+    one migration at a time without breaking anything — v23 and v24 both shipped
+    while the table still ended at v22, which is precisely the version the
+    deployment database sits at. The operator about to run those two migrations
+    was the one person the table could not tell.
+
+    Checked against the code rather than by hand because a table nobody reads is
+    a table nobody maintains: the versions are the ``PRAGMA user_version = N``
+    statements in traceability/db.py, so a migration added without a row fails
+    here.
+    """
+    from traceability.db import SCHEMA_VERSION
+
+    upgrade = read("docs/UPGRADE.md")
+    listed = sorted(int(value) for value in re.findall(r"^\|\s*v(\d+)\s*\|", upgrade, re.M))
+    if not listed:
+        fail("docs/UPGRADE.md: 迁移链表里找不到任何「| vN |」行")
+        return
+
+    # What the code actually runs, read from the migrations themselves.
+    migrations = sorted(
+        int(value)
+        for value in re.findall(
+            r"PRAGMA\s+user_version\s*=\s*(\d+)", read("traceability/db.py")
+        )
+    )
+    if migrations and migrations[-1] != SCHEMA_VERSION:
+        fail(
+            f"traceability/db.py: 最后一个迁移写到 v{migrations[-1]}，"
+            f"但 SCHEMA_VERSION 是 v{SCHEMA_VERSION}"
+        )
+
+    if listed[-1] > SCHEMA_VERSION:
+        fail(
+            f"docs/UPGRADE.md: 迁移链最后一项是 v{listed[-1]}，"
+            f"但代码只到 v{SCHEMA_VERSION}——表比代码超前"
+        )
+    elif listed[-1] != SCHEMA_VERSION:
+        fail(
+            f"docs/UPGRADE.md: 迁移链最后一项是 v{listed[-1]}，"
+            f"代码已到 v{SCHEMA_VERSION}——缺 {SCHEMA_VERSION - listed[-1]} 个迁移没有记录"
+        )
+
+    undocumented = [value for value in migrations if value not in listed]
+    if undocumented:
+        fail(
+            "docs/UPGRADE.md: 这些迁移代码里有、表里没有："
+            + "、".join(f"v{value}" for value in undocumented)
+        )
+
+    extra = [value for value in listed if value not in migrations]
+    if extra:
+        fail(
+            "docs/UPGRADE.md: 这些版本表里有、代码里没有对应的迁移："
+            + "、".join(f"v{value}" for value in extra)
+        )
+
+    missing = [value for value in range(listed[0], listed[-1] + 1) if value not in listed]
+    if missing:
+        fail(
+            f"docs/UPGRADE.md: 迁移链中间缺了 v{missing[0]}"
+            f"{'…' if len(missing) > 1 else ''}，断档会让读者以为跳过了版本"
+        )
+
+
 def check_route_total() -> None:
     """The total is stable; the per-file split is not, so only the total is pinned."""
     routes = extract_routes.extract()
@@ -465,6 +535,7 @@ def check_runtime_requirements_exclude_test_tooling() -> None:
 def main() -> int:
     check_required_documents()
     check_schema_version()
+    check_migration_chain()
     check_route_total()
     check_roles()
     check_python_versions()
