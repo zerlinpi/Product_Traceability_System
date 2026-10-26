@@ -122,3 +122,97 @@ def test_unguarded_commands_still_run_on_a_stale_database(command, stale_databas
     output = capsys.readouterr().out
     assert "本命令需要" not in output, f"{command} 不该被守卫拦下"
     assert "Traceback" not in output, f"{command} 在旧库上不应崩"
+
+
+# ---------------------------------------------------------------------------
+# The commands that consume a backup, and the one that lists them
+# ---------------------------------------------------------------------------
+
+
+def _take_a_backup(database: Path, backup_dir: Path) -> str:
+    """Back up through the CLI and return the name list-backups would print."""
+    assert manage.main(
+        ["--database", str(database), "--backup-dir", str(backup_dir), "backup"]
+    ) == 0
+    return sorted(path.name for path in backup_dir.glob("*.db"))[-1]
+
+
+def test_verifying_a_backup_by_the_name_it_was_listed_under(migrated_database, tmp_path, capsys):
+    """The runbook's next command has to work with what the last one printed.
+
+    `list-backups` prints `path.name`, so the operator's next command is
+    naturally `verify-backup traceability_20261023T153540.db`. That used to
+    answer 「备份不可用：备份文件不存在」 — the worst thing it could say, because
+    the file is sitting in the directory the command was just told about, and
+    reading it as 「my backup is broken」 during an incident is how a good backup
+    gets deleted.
+
+    Found by running all thirteen commands against a copy of the real deployment
+    database, the same way the guard above was found.
+    """
+    backup_dir = tmp_path / "backups"
+    name = _take_a_backup(migrated_database, backup_dir)
+
+    status = manage.main(
+        ["--database", str(migrated_database), "--backup-dir", str(backup_dir),
+         "verify-backup", name]
+    )
+
+    assert status == 0, capsys.readouterr().out
+    assert "备份可用" in capsys.readouterr().out
+
+
+def test_restoring_a_backup_by_the_name_it_was_listed_under(migrated_database, tmp_path, capsys):
+    """Restore takes the same name, because it is the same runbook.
+
+    This is the command an operator runs when something has already gone wrong,
+    which is exactly when they are copying a name out of `list-backups` output
+    rather than typing a path.
+    """
+    backup_dir = tmp_path / "backups"
+    name = _take_a_backup(migrated_database, backup_dir)
+
+    status = manage.main(
+        ["--database", str(migrated_database), "--backup-dir", str(backup_dir),
+         "restore", name, "--yes"]
+    )
+
+    assert status == 0, capsys.readouterr().out
+    assert "恢复完成" in capsys.readouterr().out
+
+
+def test_a_full_path_still_works_and_a_absent_name_is_reported_accurately(
+    migrated_database, tmp_path, capsys
+):
+    """The resolution must not swallow the case where nothing exists anywhere.
+
+    Accepting a name is only safe if a name that resolves nowhere still fails
+    with the truth: the path is reported as given, so the operator sees what was
+    looked for rather than a directory that happens to be configured.
+    """
+    backup_dir = tmp_path / "backups"
+    # A backup that is present, so the fabricated name below has something real
+    # to be confused with and still not match.
+    _take_a_backup(migrated_database, backup_dir)
+
+    # A full path is honoured as given, even when it is not in the directory the
+    # command was told about — the manifest travels with the file, so a backup
+    # kept elsewhere still verifies.
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    other_name = _take_a_backup(migrated_database, elsewhere)
+    status = manage.main(
+        ["--database", str(migrated_database), "--backup-dir", str(backup_dir),
+         "verify-backup", str(elsewhere / other_name)]
+    )
+    assert status == 0, capsys.readouterr().out
+
+    # And a name that is in neither place fails naming the name.
+    status = manage.main(
+        ["--database", str(migrated_database), "--backup-dir", str(backup_dir),
+         "verify-backup", "traceability_19700101T000000.db"]
+    )
+    assert status == 1
+    output = capsys.readouterr().out
+    assert "备份文件不存在" in output
+    assert "traceability_19700101T000000.db" in output, "应报出被查找的名字"

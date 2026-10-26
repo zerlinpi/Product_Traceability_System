@@ -110,8 +110,32 @@ def command_backup(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resolve_backup_file(args: argparse.Namespace) -> str:
+    """Accept the name ``list-backups`` prints, not only a full path.
+
+    The two commands that consume a backup and the one that lists them were
+    disconnected: ``list-backups`` prints ``path.name``, so the operator's next
+    command is naturally ``verify-backup traceability_20261023T153540.db`` —
+    which used to answer 「备份不可用：备份文件不存在」. That message is the
+    worst possible one here: the file is right there in the directory the
+    command was told about, and reading it as 「my backup is broken」 is how a
+    good backup gets deleted during an incident.
+
+    A name that exists in the backup directory resolves there. A path is used
+    as given, so backups kept elsewhere still work. When neither exists the
+    original argument is returned, and the caller reports it accurately.
+    """
+    candidate = Path(args.file)
+    if candidate.exists():
+        return args.file
+    in_directory = Path(args.backup_dir) / args.file
+    if in_directory.exists():
+        return str(in_directory)
+    return args.file
+
+
 def command_verify_backup(args: argparse.Namespace) -> int:
-    report = verify_backup(args.file)
+    report = verify_backup(_resolve_backup_file(args))
     print(f"校验：{report.path}")
     print(f"    结构版本  {report.schema_version}")
     print(f"    自检      {report.integrity}")
@@ -137,7 +161,7 @@ def command_restore(args: argparse.Namespace) -> int:
         print("       建议先执行 python manage.py backup 保留当前数据。")
         return 2
     report = restore_backup(
-        args.file,
+        _resolve_backup_file(args),
         args.database,
         safety_dir=args.backup_dir,
         created_at=now(),

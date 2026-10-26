@@ -14,8 +14,7 @@
 | `python manage.py backup` | 备份 + 自检 + 生成校验清单 |
 | `python manage.py backup --keep 30` | 备份后只保留最新 30 份 |
 | `python manage.py verify-backup FILE` | 校验备份是否可用（**不改动任何数据**） |
-| `python manage.py restore FILE --yes` | 用备份覆盖当前数据库 |
-| `python manage.py integrity-check` | 检查当前数据库完整性与外键 |
+| `python manage.py restore FILE --yes` | 用备份覆盖当前数据库 || `python manage.py integrity-check` | 检查当前数据库完整性与外键 |
 | `python manage.py audit-verify` | 校验审计账本哈希链是否完整 |
 | `python manage.py audit-info` | 审计账本规模、事件分布与触发器状态 |
 | `python manage.py login-status` | 登录失败计数与锁定状态 |
@@ -27,6 +26,8 @@
 | `python manage.py postflight` | **升级后**检查 |
 
 全局参数：`--database PATH`、`--backup-dir PATH`（也可用环境变量 `PTS_DATABASE` / `PTS_BACKUP_DIR`）。
+
+`verify-backup` 与 `restore` 的 `FILE` 既可以是完整路径，**也可以是 `list-backups` 打印出来的文件名**——命令会自己在备份目录里找到它。所以「列出 → 校验刚看到的那一份」可以直接照名字写，不必手拼路径。
 
 ---
 
